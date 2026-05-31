@@ -1,0 +1,19 @@
+# Cloudflare Pages 配置
+# 前端构建命令
+[build]
+command = "npm run build"
+cwd = "."
+watch_dir = "src"
+
+[build.environment]
+NODE_VERSION = "22"
+
+# 路由规则 - SPA 回退
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200
+
+# API 代理到后端（需要单独部署）
+# 注意：Cloudflare Pages 不支持 Node.js 后端
+# 后端需要部署到 Cloudflare Workers 或其他服务
