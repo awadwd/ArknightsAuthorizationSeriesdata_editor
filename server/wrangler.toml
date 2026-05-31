@@ -1,0 +1,10 @@
+name = "arknights-api"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+GITHUB_REDIRECT_URI = "https://arknights-api.awadwd.workers.dev/api/auth/callback"
+
+# Secrets (用 wrangler secret put 设置):
+# - GITHUB_CLIENT_ID
+# - GITHUB_CLIENT_SECRET
