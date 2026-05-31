@@ -12,6 +12,12 @@ const REPO_CONFIG = {
   }
 };
 
+// GitCode 项目 ID 必须用 %252F 双重编码
+// fetch() 会把 %2F 解码成 /，所以传 %252F 让 fetch 解码一次后剩 %2F
+function gitcodeProjectId(owner, repo) {
+  return `${owner}%252F${repo}`;
+}
+
 async function getAuth(env) {
   const authData = await env.AUTH_STORE?.get('current_auth');
   if (!authData) return null;
@@ -39,24 +45,31 @@ export async function onRequestPost(context) {
 
   try {
     if (source === 'gitcode') {
-      // GitCode: 用 API 检查项目是否存在
-      // 项目 ID 需要 encodeURIComponent("owner/repo") = "owner%2Frepo"
-      const projectId = encodeURIComponent(`${config.owner}/${config.repo}`);
-      const res = await fetch(`https://gitcode.com/api/v5/projects/${projectId}`, {
+      // GitCode: 用用户 API 验证 Token 有效性（避免项目 API 的编码问题）
+      // 真正的仓库访问验证在 file.js 里做
+      const userRes = await fetch('https://gitcode.com/api/v5/user', {
         headers: {
           'Authorization': `Bearer ${auth.token}`,
           'Accept': 'application/json',
         },
       });
 
-      if (res.ok) {
-        return new Response(JSON.stringify({ success: true, message: 'Repository accessible', source }), {
+      if (userRes.ok) {
+        const userData = await userRes.json();
+        return new Response(JSON.stringify({
+          success: true,
+          message: `GitCode 认证成功: ${userData.username || userData.login}`,
+          source
+        }), {
           headers: { 'Content-Type': 'application/json' }
         });
       } else {
-        const err = await res.json().catch(() => ({}));
-        return new Response(JSON.stringify({ success: false, error: err.message || `Status ${res.status}` }), {
-          status: res.status,
+        const err = await userRes.json().catch(() => ({}));
+        return new Response(JSON.stringify({
+          success: false,
+          error: err.message || `GitCode API 认证失败 (${userRes.status})`
+        }), {
+          status: userRes.status,
           headers: { 'Content-Type': 'application/json' }
         });
       }

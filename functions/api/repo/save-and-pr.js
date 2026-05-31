@@ -12,9 +12,9 @@ const REPO_CONFIG = {
   }
 };
 
-// GitCode 项目 ID：必须对 "/" 做双重编码，否则 fetch() 会解码 %2F 导致 404
+// GitCode 项目 ID 必须双重编码
 function gitcodeProjectId(owner, repo) {
-  return `${owner}%252F${repo}`; // fetch 解码一次后 → owner%2Frepo（服务器收到的正确格式）
+  return `${owner}%252F${repo}`;
 }
 
 async function getAuth(env) {
@@ -52,7 +52,7 @@ export async function onRequestPost(context) {
       const branchName = `update/${filename.replace('.json', '')}-${Date.now()}`;
       const apiBase = 'https://gitcode.com/api/v5';
 
-      // 1. 获取文件 SHA（用于后续更新）
+      // 1. 获取文件 SHA（last_commit_id）
       const fileRes = await fetch(
         `${apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}?ref=${config.branch}`,
         { headers: { 'Authorization': `Bearer ${auth.token}`, 'Accept': 'application/json' } }
@@ -88,7 +88,6 @@ export async function onRequestPost(context) {
         encoding: 'text',
         commit_message: commitMessage,
       };
-      // 如果获取到 lastCommitId，可以带上（某些 GitLab 版本需要）
       if (lastCommitId) updateBody.last_commit_id = lastCommitId;
 
       const updateRes = await fetch(

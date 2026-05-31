@@ -11,11 +11,13 @@ const REPO_CONFIG = {
     owner: 'huangjinzhou1',
     repo: 'ArknightsAuthorization_Series',
     branch: 'dev',
-    // GitCode = GitLab API，项目 ID 需要编码为 owner%2Frepo
-    apiBase: 'https://gitcode.com/api/v5',
-    projectId: (owner, repo) => encodeURIComponent(`${owner}/${repo}`),
   }
 };
+
+// GitCode 项目 ID 必须双重编码 %252F → fetch 解码后剩 %2F
+function gitcodeProjectId(owner, repo) {
+  return `${owner}%252F${repo}`;
+}
 
 async function getAuth(env) {
   try {
@@ -68,10 +70,13 @@ export async function onRequest(context) {
     let content;
 
     if (source === 'gitcode') {
-      // GitCode: 用 API 获取文件原始内容（需要认证）
+      // GitCode: 用 GitLab Raw API 获取文件原始内容
       const config = REPO_CONFIG.gitcode;
-      const projectId = config.projectId(config.owner, config.repo);
-      const fileApiUrl = `${config.apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}/raw?ref=${config.branch}`;
+      const projectId = gitcodeProjectId(config.owner, config.repo);
+      // /projects/:id/repository/files/:file_path/raw?ref=xxx
+      // filename 可能含中文/特殊字符，需要 encodeURIComponent
+      const encodedFile = encodeURIComponent(filename);
+      const fileApiUrl = `https://gitcode.com/api/v5/projects/${projectId}/repository/files/${encodedFile}/raw?ref=${config.branch}`;
 
       const res = await fetch(fileApiUrl, {
         headers: {
@@ -82,7 +87,11 @@ export async function onRequest(context) {
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
-        return new Response(JSON.stringify({ error: 'File not found', status: res.status, detail: errText.slice(0, 200) }), {
+        return new Response(JSON.stringify({
+          error: 'File not found',
+          status: res.status,
+          detail: errText.slice(0, 300)
+        }), {
           status: res.status === 404 ? 404 : 500,
           headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
@@ -91,7 +100,7 @@ export async function onRequest(context) {
       content = await res.text();
 
     } else {
-      // GitHub: 用 raw.githubusercontent.com（公开仓库无需 Token，避免 rate limit）
+      // GitHub: 用 raw.githubusercontent.com（公开仓库无需 Token）
       const config = REPO_CONFIG.github;
       const rawUrl = `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}/${filename}`;
 
@@ -102,7 +111,6 @@ export async function onRequest(context) {
         },
       };
 
-      // 带 Token 以避免匿名 rate limit
       if (auth.token) {
         fetchOptions.headers['Authorization'] = `Bearer ${auth.token}`;
       }
