@@ -1,19 +1,16 @@
 // Cloudflare Pages Function - Get File Content
-// Route: /api/repo/file?filename=xxx
+// Route: /api/repo/file?filename=xxx&source=github|gitcode
 
 const REPO_CONFIG = {
-  // GitHub 镜像仓库
   github: {
     owner: 'awadwd',
     repo: 'ArknightsAuthorization_Series-mirror',
     branch: 'dev'
   },
-  // GitCode 主仓库
   gitcode: {
     owner: 'huangjinzhou1',
     repo: 'ArknightsAuthorization_Series',
-    branch: 'dev',
-    url: 'https://gitcode.com/huangjinzhou1/ArknightsAuthorization_Series'
+    branch: 'dev'
   }
 };
 
@@ -21,13 +18,11 @@ async function getAuth(env) {
   try {
     const authData = await env.AUTH_STORE?.get('current_auth');
     if (!authData) return null;
-    
     const auth = JSON.parse(authData);
     if (auth.expires && auth.expires < Date.now()) {
       await env.AUTH_STORE?.delete('current_auth');
       return null;
     }
-    
     return auth;
   } catch {
     return null;
@@ -37,7 +32,6 @@ async function getAuth(env) {
 export async function onRequest(context) {
   const { request, env } = context;
   
-  // CORS
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       headers: {
@@ -58,6 +52,7 @@ export async function onRequest(context) {
 
   const url = new URL(request.url);
   const filename = url.searchParams.get('filename');
+  const source = url.searchParams.get('source') || auth.source || 'github';
 
   if (!filename) {
     return new Response(JSON.stringify({ error: 'Missing filename' }), {
@@ -67,25 +62,67 @@ export async function onRequest(context) {
   }
 
   try {
-    const res = await fetch(`https://api.github.com/repos/${REPO_CONFIG.github.owner}/${REPO_CONFIG.github.repo}/contents/${filename}?ref=${REPO_CONFIG.github.branch}`, {
-      headers: {
-        'Authorization': `Bearer ${auth.token}`,
-        'User-Agent': 'Arknights-Tool',
-        'Accept': 'application/vnd.github.v3.raw',
-      },
-    });
-
-    if (res.ok) {
-      const content = await res.text();
-      return new Response(JSON.stringify({ content }), {
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+    let content;
+    
+    if (source === 'gitcode') {
+      // GitCode API
+      const config = REPO_CONFIG.gitcode;
+      const res = await fetch(`https://gitcode.com/api/v5/repos/${config.owner}/${config.repo}/contents/${filename}?ref=${config.branch}`, {
+        headers: {
+          'Authorization': `Bearer ${auth.token}`,
+        },
       });
+      
+      if (!res.ok) {
+        return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+      }
+      
+      const data = await res.json();
+      // GitCode API returns base64 encoded content
+      if (data.encoding === 'base64' && data.content) {
+        content = atob(data.content.replace(/\n/g, ''));
+      } else if (data.content) {
+        content = data.content;
+      } else {
+        return new Response(JSON.stringify({ error: 'Empty content' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+      }
     } else {
-      return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      // GitHub API - 禁用缓存
+      const config = REPO_CONFIG.github;
+      const res = await fetch(`https://api.github.com/repos/${config.owner}/${config.repo}/contents/${filename}?ref=${config.branch}&_t=${Date.now()}`, {
+        headers: {
+          'Authorization': `Bearer ${auth.token}`,
+          'User-Agent': 'Arknights-Tool',
+          'Accept': 'application/vnd.github.v3.raw',
+        },
       });
+
+      if (!res.ok) {
+        return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+      }
+      
+      content = await res.text();
     }
+
+    // 禁用响应缓存
+    return new Response(JSON.stringify({ content }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    });
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,

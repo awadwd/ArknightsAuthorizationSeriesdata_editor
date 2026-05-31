@@ -895,7 +895,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
 
     async loadCurrentFile() {
       try {
-        const res = await axios.get(`/api/repo/file?filename=${this.activeFile}`)
+        const res = await axios.get(`/api/repo/file?filename=${this.activeFile}&source=${this.repoSource}`)
         if (res.data.content !== undefined) {
           this.jsonInput = res.data.content
           this.files.forEach(f => {
@@ -945,10 +945,13 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
     },
 
     editBox(idx) {
-      const boxes = this.parsedJson
-      if (!boxes || !boxes[idx]) return
-      this.editingBoxIndex = idx
-      const box = boxes[idx]
+      // idx 来自 filteredBoxes，需要映射到 parsedJson 的真实索引
+      const filtered = this.filteredBoxes
+      if (!filtered || !filtered[idx]) return
+      const box = filtered[idx]
+      // 在 parsedJson 中找到同一个对象的索引
+      const realIdx = this.parsedJson.indexOf(box)
+      this.editingBoxIndex = realIdx
       this.boxForm = { ...box }
       this.boxFormCharacters = []
       for (const key in box) {
@@ -969,10 +972,13 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
 
     deleteBox(idx) {
       if (!confirm(translate('editor.confirmDelete') || '确定删除此盒号？')) return
-      const boxes = this.parsedJson
-      if (!boxes) return
-      boxes.splice(idx, 1)
-      this.jsonInput = JSON.stringify(boxes, null, 2)
+      const filtered = this.filteredBoxes
+      if (!filtered || !filtered[idx]) return
+      const box = filtered[idx]
+      const realIdx = this.parsedJson.indexOf(box)
+      if (realIdx === -1) return
+      this.parsedJson.splice(realIdx, 1)
+      this.jsonInput = JSON.stringify(this.parsedJson, null, 2)
       this.validateJson()
     },
 
