@@ -14,18 +14,6 @@ const REPO_CONFIG = {
   }
 };
 
-// GitCode 项目 ID 必须双重编码 %252F → fetch 解码后剩 %2F
-function gitcodeProjectId(owner, repo) {
-  return `${owner}%252F${repo}`;
-}
-
-// GitCode 用 Authorization: Bearer (OAuth token), GitHub 同理
-function authHeaders(token, source) {
-  const bearer = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
-  if (source === 'github') bearer['User-Agent'] = 'Arknights-Tool';
-  return bearer;
-}
-
 async function getAuth(env) {
   try {
     const authData = await env.AUTH_STORE?.get('current_auth');
@@ -77,21 +65,14 @@ export async function onRequest(context) {
     let content;
 
     if (source === 'gitcode') {
-      // GitCode = GitLab 系，用 API v5 获取 raw 文件
-      // 关键：project ID 必须双重编码 %252F，否则 fetch() 会把 %2F 解码成 /
+      // GitCode = GitLab 系：用 API v4 获取 raw 文件内容
+      // 关键：project ID 必须双重编码 %252F，否则 Cloudflare fetch() 会把 %2F 解码成 /
       const config = REPO_CONFIG.gitcode;
       const projectId = `${config.owner}%252F${config.repo}`;
       const encodedFile = encodeURIComponent(filename);
-      const apiUrl = `https://gitcode.com/api/v5/projects/${projectId}/repository/files/${encodedFile}/raw?ref=${config.branch}`;
+      const apiUrl = `https://gitcode.com/api/v4/projects/${projectId}/repository/files/${encodedFile}/raw?ref=${config.branch}`;
 
       const res = await fetch(apiUrl, {
-        headers: {
-          'Authorization': `Bearer ${auth.token}`,
-          'Accept': '*/*',
-        },
-      });
-
-      const res = await fetch(rawUrl, {
         headers: {
           'Authorization': `Bearer ${auth.token}`,
           'Accept': '*/*',
@@ -104,7 +85,7 @@ export async function onRequest(context) {
           error: 'File not found',
           status: res.status,
           detail: errText.slice(0, 500),
-          apiUrl: apiUrl,
+          apiUrl,
           authSource: auth.source,
         }), {
           status: res.status === 404 ? 404 : 500,

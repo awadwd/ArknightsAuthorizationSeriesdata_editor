@@ -42,10 +42,10 @@ export async function onRequestPost(context) {
 
   try {
     if (source === 'gitcode') {
-      const config = REPO_CONFIG.gitcode;
+      // GitCode = GitLab 系：用 API v4 验证仓库是否可访问
       // 双重编码 project ID，fetch() 解码一次后剩 %2F
       const projectId = `${config.owner}%252F${config.repo}`;
-      const apiUrl = `https://gitcode.com/api/v5/projects/${projectId}`;
+      const apiUrl = `https://gitcode.com/api/v4/projects/${projectId}`;
 
       const res = await fetch(apiUrl, {
         headers: {
@@ -61,6 +61,7 @@ export async function onRequestPost(context) {
           message: `GitCode 仓库可访问: ${proj.path_with_namespace || proj.name}`,
           source,
           projectId: proj.id,
+          apiUrl,
         }), {
           headers: { 'Content-Type': 'application/json' }
         });
