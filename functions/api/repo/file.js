@@ -65,10 +65,10 @@ export async function onRequest(context) {
     let content;
 
     if (source === 'gitcode') {
-      // GitCode = GitLab 系：用 API v4 获取 raw 文件内容
-      // 关键：project ID 必须双重编码 %252F，否则 Cloudflare fetch() 会把 %2F 解码成 /
+      // GitCode = GitLab 系：用 API v4 获取 raw 文件
+      // fetch() 不会解码路径中的 %2F，所以只用单次编码
       const config = REPO_CONFIG.gitcode;
-      const projectId = `${config.owner}%252F${config.repo}`;
+      const projectId = `${config.owner}%2F${config.repo}`;
       const encodedFile = encodeURIComponent(filename);
       const apiUrl = `https://gitcode.com/api/v4/projects/${projectId}/repository/files/${encodedFile}/raw?ref=${config.branch}`;
 
@@ -77,7 +77,22 @@ export async function onRequest(context) {
           'Authorization': `Bearer ${auth.token}`,
           'Accept': '*/*',
         },
+        redirect: 'manual',  // 不自动跟随重定向，方便调试
       });
+
+      // 如果是 302 重定向，返回重定向地址方便调试
+      if (res.status === 302 || res.status === 301) {
+        const location = res.headers.get('Location');
+        return new Response(JSON.stringify({
+          error: 'Redirect (likely auth failure)',
+          status: res.status,
+          redirectTo: location,
+          apiUrl,
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+      }
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
