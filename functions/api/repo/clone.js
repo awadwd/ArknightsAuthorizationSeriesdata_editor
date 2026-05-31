@@ -1,20 +1,27 @@
 // Cloudflare Pages Function - Clone/Check Repo
 const REPO_CONFIG = {
-  owner: 'awadwd',
-  repo: 'ArknightsAuthorization_Series-mirror',
-  branch: 'dev'
+  github: {
+    owner: 'awadwd',
+    repo: 'ArknightsAuthorization_Series-mirror',
+    branch: 'dev',
+    apiBase: 'https://api.github.com',
+  },
+  gitcode: {
+    owner: 'huangjinzhou1',
+    repo: 'ArknightsAuthorization_Series',
+    branch: 'dev',
+    apiBase: 'https://gitcode.com/api/v5',
+  }
 };
 
 async function getAuth(env) {
   const authData = await env.AUTH_STORE?.get('current_auth');
   if (!authData) return null;
-  
   const auth = JSON.parse(authData);
   if (auth.expires && auth.expires < Date.now()) {
     await env.AUTH_STORE?.delete('current_auth');
     return null;
   }
-  
   return auth;
 }
 
@@ -29,21 +36,37 @@ export async function onRequestPost(context) {
     });
   }
 
+  const source = auth.source || 'github';
+  const config = REPO_CONFIG[source] || REPO_CONFIG.github;
+
   try {
-    const res = await fetch(`https://api.github.com/repos/${REPO_CONFIG.owner}/${REPO_CONFIG.repo}`, {
-      headers: {
-        'Authorization': `Bearer ${auth.token}`,
-        'User-Agent': 'Arknights-Tool',
-      },
-    });
+    let res;
+    if (source === 'gitcode') {
+      // GitCode: GET /api/v5/projects/{owner}%2F{repo}
+      const projectId = `${config.owner}%2F${config.repo}`;
+      res = await fetch(`${config.apiBase}/projects/${projectId}`, {
+        headers: {
+          'Authorization': `Bearer ${auth.token}`,
+          'Accept': 'application/json',
+        },
+      });
+    } else {
+      // GitHub
+      res = await fetch(`${config.apiBase}/repos/${config.owner}/${config.repo}`, {
+        headers: {
+          'Authorization': `Bearer ${auth.token}`,
+          'User-Agent': 'Arknights-Tool',
+        },
+      });
+    }
 
     if (res.ok) {
-      return new Response(JSON.stringify({ success: true, message: 'Repository accessible' }), {
+      return new Response(JSON.stringify({ success: true, message: 'Repository accessible', source }), {
         headers: { 'Content-Type': 'application/json' }
       });
     } else {
-      const err = await res.json();
-      return new Response(JSON.stringify({ success: false, error: err.message }), {
+      const err = await res.json().catch(() => ({}));
+      return new Response(JSON.stringify({ success: false, error: err.message || `Status ${res.status}` }), {
         status: res.status,
         headers: { 'Content-Type': 'application/json' }
       });
