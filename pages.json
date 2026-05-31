@@ -1,0 +1,4 @@
+# Cloudflare Pages Functions 配置
+
+functions:
+  directory: functions
