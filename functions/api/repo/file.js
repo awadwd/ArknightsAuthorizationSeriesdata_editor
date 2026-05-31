@@ -2,9 +2,19 @@
 // Route: /api/repo/file?filename=xxx
 
 const REPO_CONFIG = {
-  owner: 'awadwd',
-  repo: 'ArknightsAuthorization_Series-mirror',
-  branch: 'dev'
+  // GitHub 镜像仓库
+  github: {
+    owner: 'awadwd',
+    repo: 'ArknightsAuthorization_Series-mirror',
+    branch: 'dev'
+  },
+  // GitCode 主仓库
+  gitcode: {
+    owner: 'huangjinzhou1',
+    repo: 'ArknightsAuthorization_Series',
+    branch: 'dev',
+    url: 'https://gitcode.com/huangjinzhou1/ArknightsAuthorization_Series'
+  }
 };
 
 async function getAuth(env) {
@@ -57,7 +67,7 @@ export async function onRequest(context) {
   }
 
   try {
-    const res = await fetch(`https://api.github.com/repos/${REPO_CONFIG.owner}/${REPO_CONFIG.repo}/contents/${filename}?ref=${REPO_CONFIG.branch}`, {
+    const res = await fetch(`https://api.github.com/repos/${REPO_CONFIG.github.owner}/${REPO_CONFIG.github.repo}/contents/${filename}?ref=${REPO_CONFIG.github.branch}`, {
       headers: {
         'Authorization': `Bearer ${auth.token}`,
         'User-Agent': 'Arknights-Tool',

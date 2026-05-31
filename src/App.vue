@@ -160,6 +160,24 @@
 
         <!-- Authenticated: Repo Section -->
         <div v-else>
+          <!-- Repo Source Selector -->
+          <div class="panel" style="margin-bottom:16px;">
+            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+              <span style="font-weight:600;">{{ t('repo.source') || '仓库源' }}:</span>
+              <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                <input type="radio" v-model="repoSource" value="github" @change="onRepoSourceChange" />
+                <span>GitHub (镜像)</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                <input type="radio" v-model="repoSource" value="gitcode" @change="onRepoSourceChange" />
+                <span>GitCode (主仓库)</span>
+              </label>
+            </div>
+            <p v-if="repoSource === 'gitcode'" style="margin-top:8px; font-size:13px; color:#e65100;">
+              ⚠️ GitCode 需要单独配置 Token，暂不支持 OAuth
+            </p>
+          </div>
+
           <!-- Repo Status Bar -->
           <div class="repo-info">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:12px;">
@@ -174,15 +192,15 @@
             <div class="repo-info-grid">
               <div class="repo-info-item">
                 <span class="repo-info-label">{{ t('repo.owner') }}</span>
-                <span class="repo-info-value">awadwd</span>
+                <span class="repo-info-value">{{ currentRepo.owner }}</span>
               </div>
               <div class="repo-info-item">
                 <span class="repo-info-label">{{ t('repo.name') }}</span>
-                <span class="repo-info-value">ArknightsAuthorization_Series-mirror</span>
+                <span class="repo-info-value">{{ currentRepo.repo }}</span>
               </div>
               <div class="repo-info-item">
                 <span class="repo-info-label">{{ t('repo.baseBranch') }}</span>
-                <span class="repo-info-value">dev</span>
+                <span class="repo-info-value">{{ currentRepo.branch }}</span>
               </div>
             </div>
           </div>
@@ -601,6 +619,11 @@ export default {
 
       // Repo
       isRepoReady: localStorage.getItem('repoReady') === 'true',
+      repoSource: localStorage.getItem('repoSource') || 'github',
+      repoConfigs: {
+        github: { owner: 'awadwd', repo: 'ArknightsAuthorization_Series-mirror', branch: 'dev' },
+        gitcode: { owner: 'huangjinzhou1', repo: 'ArknightsAuthorization_Series', branch: 'dev' }
+      },
 
       // Editor
       activeFile: 'Box_Id.json',
@@ -633,6 +656,10 @@ export default {
     currentLangLabel() {
       const opt = this.localeOptions.find(o => o.code === this.locale)
       return opt ? opt.label : 'Language'
+    },
+
+    currentRepo() {
+      return this.repoConfigs[this.repoSource] || this.repoConfigs.github
     },
 
     parsedJson() {
@@ -713,6 +740,14 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       this.langOpen = false
     },
 
+    onRepoSourceChange() {
+      localStorage.setItem('repoSource', this.repoSource)
+      this.isRepoReady = false
+      localStorage.removeItem('repoReady')
+      this.jsonInput = ''
+      this.originalJson = ''
+    },
+
     getCharacters(box) {
       const chars = []
       for (const key in box) {
@@ -755,35 +790,45 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       this.loading = true
       axios.get('/api/auth/login').then(res => {
         const authUrl = res.data.authUrl
-        // Open OAuth in popup
-        const popup = window.open(authUrl, 'github-oauth', 'width=600,height=700,scrollbars=yes')
-        if (!popup) {
-          this.authError = '请允许弹出窗口以完成 GitHub 授权'
-          this.loading = false
-          return
-        }
-        // Listen for callback message
-        const handleMessage = (event) => {
-          if (event.data?.type === 'github-oauth-success') {
-            this.isAuthenticated = true
-            this.username = event.data.user
-            localStorage.setItem('isAuth', 'true')
-            localStorage.setItem('user', event.data.user)
-            localStorage.setItem('gh_token', event.data.token)
-            localStorage.setItem('gh_user', event.data.user)
+        
+        // 检测是否为移动端
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768
+        
+        if (isMobile) {
+          // 移动端：保存当前状态，页面内跳转
+          sessionStorage.setItem('oauth_redirect', window.location.href)
+          window.location.href = authUrl
+        } else {
+          // PC端：弹窗
+          const popup = window.open(authUrl, 'github-oauth', 'width=600,height=700,scrollbars=yes')
+          if (!popup) {
+            this.authError = '请允许弹出窗口以完成 GitHub 授权'
             this.loading = false
-            window.removeEventListener('message', handleMessage)
+            return
           }
+          // Listen for callback message
+          const handleMessage = (event) => {
+            if (event.data?.type === 'github-oauth-success') {
+              this.isAuthenticated = true
+              this.username = event.data.user
+              localStorage.setItem('isAuth', 'true')
+              localStorage.setItem('user', event.data.user)
+              localStorage.setItem('gh_token', event.data.token)
+              localStorage.setItem('gh_user', event.data.user)
+              this.loading = false
+              window.removeEventListener('message', handleMessage)
+            }
+          }
+          window.addEventListener('message', handleMessage)
+          // Fallback: poll for popup close
+          const checkClosed = setInterval(() => {
+            if (popup.closed) {
+              clearInterval(checkClosed)
+              this.loading = false
+              window.removeEventListener('message', handleMessage)
+            }
+          }, 500)
         }
-        window.addEventListener('message', handleMessage)
-        // Fallback: poll for popup close
-        const checkClosed = setInterval(() => {
-          if (popup.closed) {
-            clearInterval(checkClosed)
-            this.loading = false
-            window.removeEventListener('message', handleMessage)
-          }
-        }, 500)
       }).catch(err => {
         this.authError = 'OAuth 登录失败: ' + err.message
         this.loading = false

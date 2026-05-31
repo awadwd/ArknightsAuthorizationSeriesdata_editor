@@ -10,7 +10,7 @@ export const localeLabels: Record<AppLocale, string> = {
 export const messages = {
   'zh-CN': {
     app: {
-      title: '明日方舟协作编辑器',
+      title: '明日方舟通行证数据仓库编辑器',
       welcome: '欢迎，{name}',
       logout: '退出登录',
     },
@@ -33,6 +33,7 @@ export const messages = {
       oauthLogin: 'GitHub 登录授权',
     },
     repo: {
+      source: '仓库源',
       clone: '克隆/更新仓库',
       cloning: '克隆中...',
       pulling: '更新中...',
