@@ -905,10 +905,10 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
 
     async loadCurrentFile() {
       try {
-        // GitCode 源：浏览器直接请求，绕过 Cloudflare Workers WAF 拦截
+        // GitCode 源：浏览器直接请求 raw 文件，绕过 Cloudflare Workers WAF 拦截
         if (this.repoSource === 'gitcode') {
           const config = this.repoConfigs.gitcode;
-          const rawUrl = `https://gitcode.com/${config.owner}/${config.repo}/raw/${config.branch}/${encodeURIComponent(this.activeFile)}`;
+          const rawUrl = `https://raw.gitcode.com/${config.owner}/${config.repo}/raw/${config.branch}/${encodeURIComponent(this.activeFile)}`;
           const res = await fetch(rawUrl);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const content = await res.text();
