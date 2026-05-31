@@ -17,6 +17,24 @@ function gitcodeProjectId(owner, repo) {
   return `${owner}%252F${repo}`;
 }
 
+// GitCode 用 PRIVATE-TOKEN，GitHub 用 Authorization: Bearer
+function gitcodeHeaders(token) {
+  return {
+    'PRIVATE-TOKEN': token,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+}
+
+function githubHeaders(token) {
+  return {
+    'Authorization': `Bearer ${token}`,
+    'User-Agent': 'Arknights-Tool',
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+}
+
 async function getAuth(env) {
   const authData = await env.AUTH_STORE?.get('current_auth');
   if (!authData) return null;
@@ -41,6 +59,8 @@ export async function onRequestPost(context) {
 
   const source = auth.source || 'github';
   const config = REPO_CONFIG[source] || REPO_CONFIG.github;
+  const token = auth.token;
+  const apiBase = source === 'gitcode' ? 'https://gitcode.com/api/v5' : null;
 
   try {
     const body = await request.json();
@@ -50,12 +70,11 @@ export async function onRequestPost(context) {
       // ============ GitCode (GitLab API) ============
       const projectId = gitcodeProjectId(config.owner, config.repo);
       const branchName = `update/${filename.replace('.json', '')}-${Date.now()}`;
-      const apiBase = 'https://gitcode.com/api/v5';
 
-      // 1. 获取文件 SHA（last_commit_id）
+      // 1. 获取文件 last_commit_id
       const fileRes = await fetch(
         `${apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}?ref=${config.branch}`,
-        { headers: { 'Authorization': `Bearer ${auth.token}`, 'Accept': 'application/json' } }
+        { headers: gitcodeHeaders(token) }
       );
 
       let lastCommitId = null;
@@ -69,7 +88,7 @@ export async function onRequestPost(context) {
         `${apiBase}/projects/${projectId}/repository/branches?branch_name=${encodeURIComponent(branchName)}&ref=${encodeURIComponent(config.branch)}`,
         {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${auth.token}`, 'Accept': 'application/json' },
+          headers: gitcodeHeaders(token),
         }
       );
 
@@ -94,11 +113,7 @@ export async function onRequestPost(context) {
         `${apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}`,
         {
           method: 'PUT',
-          headers: {
-            'Authorization': `Bearer ${auth.token}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
+          headers: gitcodeHeaders(token),
           body: JSON.stringify(updateBody),
         }
       );
@@ -116,11 +131,7 @@ export async function onRequestPost(context) {
         `${apiBase}/projects/${projectId}/merge_requests`,
         {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${auth.token}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
+          headers: gitcodeHeaders(token),
           body: JSON.stringify({
             source_branch: branchName,
             target_branch: config.branch,
@@ -149,7 +160,7 @@ export async function onRequestPost(context) {
 
       // 1. Get file SHA
       const fileRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}?ref=${branch}`, {
-        headers: { 'Authorization': `Bearer ${auth.token}`, 'User-Agent': 'Arknights-Tool' },
+        headers: githubHeaders(token)
       });
 
       if (!fileRes.ok) {
@@ -166,32 +177,24 @@ export async function onRequestPost(context) {
       const branchName = `update/${filename.replace('.json', '')}-${Date.now()}`;
 
       const refRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
-        headers: { 'Authorization': `Bearer ${auth.token}`, 'User-Agent': 'Arknights-Tool' },
+        headers: githubHeaders(token)
       });
       const refData = await refRes.json();
       const baseSha = refData.object.sha;
 
       await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${auth.token}`,
-          'User-Agent': 'Arknights-Tool',
-          'Content-Type': 'application/json',
-        },
+        headers: githubHeaders(token),
         body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha: baseSha }),
       });
 
       // 3. Update file
       const updateRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${auth.token}`,
-          'User-Agent': 'Arknights-Tool',
-          'Content-Type': 'application/json',
-        },
+        headers: githubHeaders(token),
         body: JSON.stringify({
           message: commitMessage,
-          content: btoa(unescape(encodeURIComponent(content))),
+          content: content,  // GitHub API 接受原始字符串（会自动 base64 编码）
           sha,
           branch: branchName,
         }),
@@ -208,11 +211,7 @@ export async function onRequestPost(context) {
       // 4. Create PR
       const prRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${auth.token}`,
-          'User-Agent': 'Arknights-Tool',
-          'Content-Type': 'application/json',
-        },
+        headers: githubHeaders(token),
         body: JSON.stringify({
           title: commitMessage,
           head: branchName,

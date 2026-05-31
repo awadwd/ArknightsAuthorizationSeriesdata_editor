@@ -12,12 +12,6 @@ const REPO_CONFIG = {
   }
 };
 
-// GitCode 项目 ID 必须用 %252F 双重编码
-// fetch() 会把 %2F 解码成 /，所以传 %252F 让 fetch 解码一次后剩 %2F
-function gitcodeProjectId(owner, repo) {
-  return `${owner}%252F${repo}`;
-}
-
 async function getAuth(env) {
   const authData = await env.AUTH_STORE?.get('current_auth');
   if (!authData) return null;
@@ -30,7 +24,7 @@ async function getAuth(env) {
 }
 
 export async function onRequestPost(context) {
-  const { env } = context;
+  const { request, env } = context;
 
   const auth = await getAuth(env);
   if (!auth || !auth.authenticated) {
@@ -40,36 +34,38 @@ export async function onRequestPost(context) {
     });
   }
 
-  const source = auth.source || 'github';
+  // source 优先从请求体取，fallback 到 auth.source
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const source = body.source || auth.source || 'github';
   const config = REPO_CONFIG[source] || REPO_CONFIG.github;
 
   try {
     if (source === 'gitcode') {
-      // GitCode: 用用户 API 验证 Token 有效性（避免项目 API 的编码问题）
-      // 真正的仓库访问验证在 file.js 里做
-      const userRes = await fetch('https://gitcode.com/api/v5/user', {
+      // GitCode (GitLab): 用 PRIVATE-TOKEN 请求头
+      const res = await fetch('https://gitcode.com/api/v5/user', {
         headers: {
-          'Authorization': `Bearer ${auth.token}`,
+          'PRIVATE-TOKEN': auth.token,
           'Accept': 'application/json',
         },
       });
 
-      if (userRes.ok) {
-        const userData = await userRes.json();
+      if (res.ok) {
+        const userData = await res.json();
         return new Response(JSON.stringify({
           success: true,
-          message: `GitCode 认证成功: ${userData.username || userData.login}`,
+          message: `GitCode 认证成功: ${userData.username || userData.login || userData.name}`,
           source
         }), {
           headers: { 'Content-Type': 'application/json' }
         });
       } else {
-        const err = await userRes.json().catch(() => ({}));
+        const errText = await res.text().catch(() => '');
         return new Response(JSON.stringify({
           success: false,
-          error: err.message || `GitCode API 认证失败 (${userRes.status})`
+          error: `GitCode 认证失败 (${res.status}): ${errText.slice(0, 200)}`
         }), {
-          status: userRes.status,
+          status: res.status,
           headers: { 'Content-Type': 'application/json' }
         });
       }

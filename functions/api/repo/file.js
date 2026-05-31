@@ -19,6 +19,14 @@ function gitcodeProjectId(owner, repo) {
   return `${owner}%252F${repo}`;
 }
 
+// GitCode 用 PRIVATE-TOKEN，GitHub 用 Authorization: Bearer
+function authHeaders(token, source) {
+  if (source === 'gitcode') {
+    return { 'PRIVATE-TOKEN': token, 'Accept': 'application/json' };
+  }
+  return { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Arknights-Tool' };
+}
+
 async function getAuth(env) {
   try {
     const authData = await env.AUTH_STORE?.get('current_auth');
@@ -70,17 +78,15 @@ export async function onRequest(context) {
     let content;
 
     if (source === 'gitcode') {
-      // GitCode: 用 GitLab Raw API 获取文件原始内容
+      // GitCode: GitLab Raw API
       const config = REPO_CONFIG.gitcode;
       const projectId = gitcodeProjectId(config.owner, config.repo);
-      // /projects/:id/repository/files/:file_path/raw?ref=xxx
-      // filename 可能含中文/特殊字符，需要 encodeURIComponent
       const encodedFile = encodeURIComponent(filename);
       const fileApiUrl = `https://gitcode.com/api/v5/projects/${projectId}/repository/files/${encodedFile}/raw?ref=${config.branch}`;
 
       const res = await fetch(fileApiUrl, {
         headers: {
-          'Authorization': `Bearer ${auth.token}`,
+          'PRIVATE-TOKEN': auth.token,
           'Accept': '*/*',
         },
       });
@@ -100,7 +106,7 @@ export async function onRequest(context) {
       content = await res.text();
 
     } else {
-      // GitHub: 用 raw.githubusercontent.com（公开仓库无需 Token）
+      // GitHub: raw.githubusercontent.com
       const config = REPO_CONFIG.github;
       const rawUrl = `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}/${filename}`;
 

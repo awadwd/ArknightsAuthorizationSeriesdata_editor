@@ -869,7 +869,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       this.errorMessage = ''
       this.prUrl = ''
       try {
-        const res = await axios.post('/api/repo/clone')
+        const res = await axios.post('/api/repo/clone', { source: this.repoSource })
         if (res.data.success) {
           this.isRepoReady = true
           localStorage.setItem('repoReady', 'true')
@@ -895,7 +895,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
 
     async loadCurrentFile() {
       try {
-        const res = await axios.get(`/api/repo/file?filename=${this.activeFile}&source=${this.repoSource}`)
+        const res = await axios.get(`/api/repo/file?filename=${encodeURIComponent(this.activeFile)}&source=${this.repoSource}`)
         if (res.data.content !== undefined) {
           this.jsonInput = res.data.content
           this.files.forEach(f => {
