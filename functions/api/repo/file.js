@@ -1,4 +1,6 @@
-// Cloudflare Pages Function - Get File
+// Cloudflare Pages Function - Get File Content
+// Route: /api/repo/file?filename=xxx
+
 const REPO_CONFIG = {
   owner: 'awadwd',
   repo: 'ArknightsAuthorization_Series-mirror',
@@ -6,26 +8,41 @@ const REPO_CONFIG = {
 };
 
 async function getAuth(env) {
-  const authData = await env.AUTH_STORE?.get('current_auth');
-  if (!authData) return null;
-  
-  const auth = JSON.parse(authData);
-  if (auth.expires && auth.expires < Date.now()) {
-    await env.AUTH_STORE?.delete('current_auth');
+  try {
+    const authData = await env.AUTH_STORE?.get('current_auth');
+    if (!authData) return null;
+    
+    const auth = JSON.parse(authData);
+    if (auth.expires && auth.expires < Date.now()) {
+      await env.AUTH_STORE?.delete('current_auth');
+      return null;
+    }
+    
+    return auth;
+  } catch {
     return null;
   }
-  
-  return auth;
 }
 
 export async function onRequest(context) {
   const { request, env } = context;
   
+  // CORS
+  if (request.method === 'OPTIONS') {
+    return new Response(null, {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      }
+    });
+  }
+  
   const auth = await getAuth(env);
   if (!auth || !auth.authenticated) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), {
       status: 401,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
     });
   }
 
@@ -35,7 +52,7 @@ export async function onRequest(context) {
   if (!filename) {
     return new Response(JSON.stringify({ error: 'Missing filename' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
     });
   }
 
@@ -51,18 +68,18 @@ export async function onRequest(context) {
     if (res.ok) {
       const content = await res.text();
       return new Response(JSON.stringify({ content }), {
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
       });
     } else {
-      return new Response(JSON.stringify({ error: 'File not found' }), {
+      return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
       });
     }
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
     });
   }
 }
