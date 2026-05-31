@@ -3,55 +3,70 @@ export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
-  const source = url.searchParams.get('source') || 'github';
-  
+  const stateParam = url.searchParams.get('state') || '';
+
   if (!code) {
     return new Response('<h1>授权失败</h1><p>缺少授权码</p>', {
       headers: { 'Content-Type': 'text/html; charset=utf-8' }
     });
   }
 
+  // 从 state 解析 source: <random>_<source>
+  let source = 'github';
+  if (stateParam.includes('_')) {
+    const parts = stateParam.split('_');
+    const s = parts[parts.length - 1];
+    if (s === 'gitcode' || s === 'github') source = s;
+  }
+
   try {
     let accessToken;
     let userData;
-    
+
     if (source === 'gitcode') {
-      // GitCode OAuth
-      const redirectUri = `${url.origin}/api/auth/callback?source=gitcode`;
-      
-      // Exchange code for token
+      // GitCode (GitLab OAuth): token 交换用 x-www-form-urlencoded
+      const redirectUri = `${url.origin}/api/auth/callback`;
+
       const tokenRes = await fetch('https://gitcode.com/oauth/token', {
         method: 'POST',
-        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+        body: new URLSearchParams({
           client_id: '94ab054141264207b31c98c85e52d3b8',
           client_secret: 'e3034cd9fa164589a0f35a3c06b0168f',
           code,
-          redirect_uri: redirectUri,
           grant_type: 'authorization_code',
+          redirect_uri: redirectUri,
         }),
       });
+
       const tokenData = await tokenRes.json();
 
       if (tokenData.error) {
-        return new Response(`<h1>授权失败</h1><p>${tokenData.error}</p>`, {
+        return new Response(`<h1>授权失败</h1><p>${tokenData.error}: ${tokenData.error_description || ''}</p>`, {
           headers: { 'Content-Type': 'text/html; charset=utf-8' }
         });
       }
 
       accessToken = tokenData.access_token;
 
-      // Get user info from GitCode
+      // 验证 token：获取用户信息
       const userRes = await fetch('https://gitcode.com/api/v5/user', {
-        headers: { 'Authorization': `Bearer ${accessToken}` },
+        headers: { 'Authorization': `Bearer ${accessToken}`, 'Accept': 'application/json' },
       });
+
+      if (!userRes.ok) {
+        const errText = await userRes.text().catch(() => '');
+        return new Response(`<h1>获取用户信息失败</h1><p>${userRes.status}: ${errText.slice(0, 200)}</p>`, {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+
       userData = await userRes.json();
-      
+
     } else {
       // GitHub OAuth
       const redirectUri = `${url.origin}/api/auth/callback`;
-      
-      // Exchange code for token
+
       const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
         method: 'POST',
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
@@ -72,14 +87,13 @@ export async function onRequest(context) {
 
       accessToken = tokenData.access_token;
 
-      // Get user info from GitHub
       const userRes = await fetch('https://api.github.com/user', {
         headers: { 'Authorization': `Bearer ${accessToken}`, 'User-Agent': 'Arknights-Tool' },
       });
       userData = await userRes.json();
     }
 
-    const username = userData.login || userData.username;
+    const username = userData.login || userData.username || 'unknown';
     const sourceLabel = source === 'gitcode' ? 'GitCode' : 'GitHub';
 
     // 存储到 KV (24小时过期)
@@ -114,16 +128,13 @@ export async function onRequest(context) {
           <p style="font-size: 14px; color: #999;">正在返回编辑器...</p>
         </div>
         <script>
-          // 保存认证信息到 localStorage
           localStorage.setItem('isAuth', 'true');
           localStorage.setItem('user', '${username}');
           localStorage.setItem('gh_token', '${accessToken}');
           localStorage.setItem('gh_user', '${username}');
           localStorage.setItem('auth_source', '${source}');
-          
-          // 检测是否有 opener（弹窗模式）
+
           if (window.opener) {
-            // PC端弹窗：通知父窗口并关闭
             window.opener.postMessage({
               type: 'github-oauth-success',
               user: '${username}',
@@ -132,7 +143,6 @@ export async function onRequest(context) {
             }, '*');
             setTimeout(function() { window.close(); }, 1500);
           } else {
-            // 移动端或直接访问：跳转到首页
             setTimeout(function() { window.location.href = '/'; }, 1000);
           }
         </script>
