@@ -5,12 +5,17 @@ const REPO_CONFIG = {
   github: {
     owner: 'awadwd',
     repo: 'ArknightsAuthorization_Series-mirror',
-    branch: 'dev'
+    branch: 'dev',
+    rawUrl: (owner, repo, branch, filename) =>
+      `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filename}`
   },
   gitcode: {
     owner: 'huangjinzhou1',
     repo: 'ArknightsAuthorization_Series',
-    branch: 'dev'
+    branch: 'dev',
+    // GitCode raw 文件 URL（公开仓库无需认证）
+    rawUrl: (owner, repo, branch, filename) =>
+      `https://gitcode.com/${owner}/${repo}/raw/branch/${branch}/${filename}`
   }
 };
 
@@ -31,7 +36,7 @@ async function getAuth(env) {
 
 export async function onRequest(context) {
   const { request, env } = context;
-  
+
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       headers: {
@@ -41,7 +46,7 @@ export async function onRequest(context) {
       }
     });
   }
-  
+
   const auth = await getAuth(env);
   if (!auth || !auth.authenticated) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), {
@@ -61,59 +66,35 @@ export async function onRequest(context) {
     });
   }
 
-  try {
-    let content;
-    
-    if (source === 'gitcode') {
-      // GitCode API
-      const config = REPO_CONFIG.gitcode;
-      const res = await fetch(`https://gitcode.com/api/v5/repos/${config.owner}/${config.repo}/contents/${filename}?ref=${config.branch}`, {
-        headers: {
-          'Authorization': `Bearer ${auth.token}`,
-        },
-      });
-      
-      if (!res.ok) {
-        return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
-          status: 404,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-        });
-      }
-      
-      const data = await res.json();
-      // GitCode API returns base64 encoded content
-      if (data.encoding === 'base64' && data.content) {
-        content = atob(data.content.replace(/\n/g, ''));
-      } else if (data.content) {
-        content = data.content;
-      } else {
-        return new Response(JSON.stringify({ error: 'Empty content' }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-        });
-      }
-    } else {
-      // GitHub API - 禁用缓存
-      const config = REPO_CONFIG.github;
-      const res = await fetch(`https://api.github.com/repos/${config.owner}/${config.repo}/contents/${filename}?ref=${config.branch}&_t=${Date.now()}`, {
-        headers: {
-          'Authorization': `Bearer ${auth.token}`,
-          'User-Agent': 'Arknights-Tool',
-          'Accept': 'application/vnd.github.v3.raw',
-        },
-      });
+  const config = REPO_CONFIG[source] || REPO_CONFIG.github;
+  const rawUrl = config.rawUrl(config.owner, config.repo, config.branch, filename);
 
-      if (!res.ok) {
-        return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
-          status: 404,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-        });
-      }
-      
-      content = await res.text();
+  try {
+    // 公开仓库直接拉 raw 文件，无需 API Token
+    // 私有仓库才需要 Bearer token
+    const fetchOptions = {
+      headers: {
+        'User-Agent': 'Arknights-Tool',
+        'Cache-Control': 'no-cache',
+      },
+    };
+
+    // 如果是 GitHub 且 Token 有效，带上以绕过 rate limit
+    if (source === 'github' && auth.token) {
+      fetchOptions.headers['Authorization'] = `Bearer ${auth.token}`;
     }
 
-    // 禁用响应缓存
+    const res = await fetch(rawUrl + `?t=${Date.now()}`, fetchOptions);
+
+    if (!res.ok) {
+      return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
+        status: res.status === 404 ? 404 : 500,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      });
+    }
+
+    const content = await res.text();
+
     return new Response(JSON.stringify({ content }), {
       headers: {
         'Content-Type': 'application/json',
