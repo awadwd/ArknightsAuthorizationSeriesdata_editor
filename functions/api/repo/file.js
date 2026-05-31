@@ -77,13 +77,11 @@ export async function onRequest(context) {
     let content;
 
     if (source === 'gitcode') {
-      // GitCode: GitLab Raw API
+      // GitCode: 直接用 raw 文件 URL（GitLab 系支持）
       const config = REPO_CONFIG.gitcode;
-      const projectId = gitcodeProjectId(config.owner, config.repo);
-      const encodedFile = encodeURIComponent(filename);
-      const fileApiUrl = `https://gitcode.com/api/v5/projects/${projectId}/repository/files/${encodedFile}/raw?ref=${config.branch}`;
+      const rawUrl = `https://gitcode.com/${config.owner}/${config.repo}/raw/${config.branch}/${filename}`;
 
-      const res = await fetch(fileApiUrl, {
+      const res = await fetch(rawUrl, {
         headers: {
           'Authorization': `Bearer ${auth.token}`,
           'Accept': '*/*',
@@ -95,7 +93,9 @@ export async function onRequest(context) {
         return new Response(JSON.stringify({
           error: 'File not found',
           status: res.status,
-          detail: errText.slice(0, 300)
+          detail: errText.slice(0, 500),
+          requestUrl: rawUrl,
+          authSource: auth.source,
         }), {
           status: res.status === 404 ? 404 : 500,
           headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
