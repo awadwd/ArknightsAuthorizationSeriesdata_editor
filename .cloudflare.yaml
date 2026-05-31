@@ -1,13 +1,7 @@
 {
   "build": {
-    "command": "npm run build",
+    "command": "npm run build && echo 'Build complete'",
     "cwd": "/",
     "watch_dir": "src"
-  },
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
-    }
-  ]
+  }
 }
