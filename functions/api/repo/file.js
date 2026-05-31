@@ -77,9 +77,9 @@ export async function onRequest(context) {
     let content;
 
     if (source === 'gitcode') {
-      // GitCode: 直接用 raw 文件 URL（GitLab 系支持）
+      // GitCode 是 GitLab 系，raw URL 必须加 /-/
       const config = REPO_CONFIG.gitcode;
-      const rawUrl = `https://gitcode.com/${config.owner}/${config.repo}/raw/${config.branch}/${filename}`;
+      const rawUrl = `https://gitcode.com/${config.owner}/${config.repo}/-/raw/${config.branch}/${filename}`;
 
       const res = await fetch(rawUrl, {
         headers: {
