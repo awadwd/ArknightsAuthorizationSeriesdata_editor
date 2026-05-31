@@ -76,29 +76,18 @@ export async function onRequest(context) {
           localStorage.setItem('gh_token', '${accessToken}');
           localStorage.setItem('gh_user', '${userData.login}');
           
-          // 检测是否为移动端
-          var isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
-          
-          if (isMobile) {
-            // 移动端：跳转回原页面
-            var redirectUrl = sessionStorage.getItem('oauth_redirect') || '/';
-            sessionStorage.removeItem('oauth_redirect');
-            setTimeout(function() {
-              window.location.href = redirectUrl;
-            }, 1000);
+          // 检测是否有 opener（弹窗模式）
+          if (window.opener) {
+            // PC端弹窗：通知父窗口并关闭
+            window.opener.postMessage({
+              type: 'github-oauth-success',
+              user: '${userData.login}',
+              token: '${accessToken}'
+            }, '*');
+            setTimeout(function() { window.close(); }, 1500);
           } else {
-            // PC端：通知父窗口并关闭
-            if (window.opener) {
-              window.opener.postMessage({
-                type: 'github-oauth-success',
-                user: '${userData.login}',
-                token: '${accessToken}'
-              }, '*');
-              setTimeout(function() { window.close(); }, 1500);
-            } else {
-              // 如果没有 opener（可能是直接访问），跳转到首页
-              setTimeout(function() { window.location.href = '/'; }, 1500);
-            }
+            // 移动端或直接访问：跳转到首页
+            setTimeout(function() { window.location.href = '/'; }, 1000);
           }
         </script>
       </body>
