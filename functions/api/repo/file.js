@@ -7,11 +7,8 @@ const REPO_CONFIG = {
     repo: 'ArknightsAuthorization_Series-mirror',
     branch: 'dev',
   },
-  gitcode: {
-    owner: 'huangjinzhou1',
-    repo: 'ArknightsAuthorization_Series',
-    branch: 'dev',
-  }
+  // GitCode 源不再走后端，改浏览器直连
+  // 保留 github 配置供后端使用
 };
 
 async function getAuth(env) {
@@ -54,6 +51,17 @@ export async function onRequest(context) {
   const filename = url.searchParams.get('filename');
   const source = url.searchParams.get('source') || auth.source || 'github';
 
+  // GitCode 源不走后端，直接返回错误提示
+  if (source === 'gitcode') {
+    return new Response(JSON.stringify({
+      error: 'GitCode source should use browser direct fetch, not backend API',
+      useBrowserFetch: true,
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+    });
+  }
+
   if (!filename) {
     return new Response(JSON.stringify({ error: 'Missing filename' }), {
       status: 400,
@@ -64,79 +72,31 @@ export async function onRequest(context) {
   try {
     let content;
 
-    if (source === 'gitcode') {
-      // GitCode = GitLab 系：用 API v4 获取 raw 文件
-      // fetch() 不会解码路径中的 %2F，所以只用单次编码
-      const config = REPO_CONFIG.gitcode;
-      const projectId = `${config.owner}%2F${config.repo}`;
-      const encodedFile = encodeURIComponent(filename);
-      const apiUrl = `https://gitcode.com/api/v4/projects/${projectId}/repository/files/${encodedFile}/raw?ref=${config.branch}`;
+    // GitHub only (GitCode 走浏览器直连)
+    const config = REPO_CONFIG.github;
+    const rawUrl = `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}/${filename}`;
 
-      const res = await fetch(apiUrl, {
-        headers: {
-          'Authorization': `Bearer ${auth.token}`,
-          'Accept': '*/*',
-        },
-        redirect: 'manual',  // 不自动跟随重定向，方便调试
-      });
+    const fetchOptions = {
+      headers: {
+        'User-Agent': 'Arknights-Tool',
+        'Cache-Control': 'no-cache',
+      },
+    };
 
-      // 如果是 302 重定向，返回重定向地址方便调试
-      if (res.status === 302 || res.status === 301) {
-        const location = res.headers.get('Location');
-        return new Response(JSON.stringify({
-          error: 'Redirect (likely auth failure)',
-          status: res.status,
-          redirectTo: location,
-          apiUrl,
-        }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-        });
-      }
-
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        return new Response(JSON.stringify({
-          error: 'File not found',
-          status: res.status,
-          detail: errText.slice(0, 500),
-          apiUrl,
-          authSource: auth.source,
-        }), {
-          status: res.status === 404 ? 404 : 500,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-        });
-      }
-
-      content = await res.text();
-
-    } else {
-      // GitHub: raw.githubusercontent.com
-      const config = REPO_CONFIG.github;
-      const rawUrl = `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}/${filename}`;
-
-      const fetchOptions = {
-        headers: {
-          'User-Agent': 'Arknights-Tool',
-          'Cache-Control': 'no-cache',
-        },
-      };
-
-      if (auth.token) {
-        fetchOptions.headers['Authorization'] = `Bearer ${auth.token}`;
-      }
-
-      const res = await fetch(rawUrl + `?t=${Date.now()}`, fetchOptions);
-
-      if (!res.ok) {
-        return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
-          status: res.status === 404 ? 404 : 500,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-        });
-      }
-
-      content = await res.text();
+    if (auth.token) {
+      fetchOptions.headers['Authorization'] = `Bearer ${auth.token}`;
     }
+
+    const res = await fetch(rawUrl + `?t=${Date.now()}`, fetchOptions);
+
+    if (!res.ok) {
+      return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
+        status: res.status === 404 ? 404 : 500,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      });
+    }
+
+    content = await res.text();
 
     return new Response(JSON.stringify({ content }), {
       headers: {
