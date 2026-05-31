@@ -42,10 +42,11 @@ export async function onRequestPost(context) {
 
   try {
     if (source === 'gitcode') {
-      // GitCode (GitLab): 用 PRIVATE-TOKEN 请求头
+      // GitCode (GitLab): OAuth access_token 用 Authorization: Bearer
+      // PRIVATE-TOKEN 只接受 PAT，不接受 OAuth token
       const res = await fetch('https://gitcode.com/api/v5/user', {
         headers: {
-          'PRIVATE-TOKEN': auth.token,
+          'Authorization': `Bearer ${auth.token}`,
           'Accept': 'application/json',
         },
       });

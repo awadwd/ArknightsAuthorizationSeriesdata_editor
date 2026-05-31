@@ -12,15 +12,11 @@ const REPO_CONFIG = {
   }
 };
 
-// GitCode 项目 ID 必须双重编码
-function gitcodeProjectId(owner, repo) {
-  return `${owner}%252F${repo}`;
-}
-
-// GitCode 用 PRIVATE-TOKEN，GitHub 用 Authorization: Bearer
+// GitCode (GitLab OAuth) 用 Authorization: Bearer (和 GitHub 一样)
+// PRIVATE-TOKEN 只接受 PAT，不接受 OAuth access_token
 function gitcodeHeaders(token) {
   return {
-    'PRIVATE-TOKEN': token,
+    'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   };

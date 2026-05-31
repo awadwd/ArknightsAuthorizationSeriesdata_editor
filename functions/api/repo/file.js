@@ -19,12 +19,11 @@ function gitcodeProjectId(owner, repo) {
   return `${owner}%252F${repo}`;
 }
 
-// GitCode 用 PRIVATE-TOKEN，GitHub 用 Authorization: Bearer
+// GitCode 用 Authorization: Bearer (OAuth token), GitHub 同理
 function authHeaders(token, source) {
-  if (source === 'gitcode') {
-    return { 'PRIVATE-TOKEN': token, 'Accept': 'application/json' };
-  }
-  return { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Arknights-Tool' };
+  const bearer = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+  if (source === 'github') bearer['User-Agent'] = 'Arknights-Tool';
+  return bearer;
 }
 
 async function getAuth(env) {
@@ -86,7 +85,7 @@ export async function onRequest(context) {
 
       const res = await fetch(fileApiUrl, {
         headers: {
-          'PRIVATE-TOKEN': auth.token,
+          'Authorization': `Bearer ${auth.token}`,
           'Accept': '*/*',
         },
       });
