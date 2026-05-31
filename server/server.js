@@ -2,6 +2,9 @@
 // TODO: Remove this in production and use proper SSL certificates
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
+// Load environment variables
+import 'dotenv/config';
+
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -15,8 +18,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // GitHub OAuth Config
-const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Ov23liE3h9mVLCbbzdHA';
-const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || 'ea15b10bf3f9e83a842d60542ef913156d3577fb';
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || '';
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
 const GITHUB_REDIRECT_URI = process.env.GITHUB_REDIRECT_URI || 'http://localhost:3000/api/auth/callback';
 
 // Middleware
