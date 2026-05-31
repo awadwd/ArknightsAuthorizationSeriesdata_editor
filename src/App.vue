@@ -869,20 +869,13 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       this.errorMessage = ''
       this.prUrl = ''
       try {
-        // GitCode 源：浏览器端直接验证，不走后端（WAF 拦截）
+        // GitCode 源：跳过后端验证（WAF 拦 CF Workers，CORS 拦浏览器）
+        // 直接标记就绪，试加载文件，失败再报错
         if (this.repoSource === 'gitcode') {
-          const token = localStorage.getItem('gh_token');
-          const config = this.repoConfigs.gitcode;
-          const apiUrl = `https://gitcode.com/api/v4/projects/${encodeURIComponent(config.owner + '/' + config.repo)}`;
-          const res = await fetch(apiUrl, {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-          });
-          if (!res.ok) throw new Error(`GitCode 仓库不可访问 (${res.status})`);
-          const proj = await res.json();
-          this.isRepoReady = true;
-          localStorage.setItem('repoReady', 'true');
-          await this.loadCurrentFile();
-          return;
+          this.isRepoReady = true
+          localStorage.setItem('repoReady', 'true')
+          await this.loadCurrentFile()
+          return
         }
 
         // GitHub 源：走后端 API
