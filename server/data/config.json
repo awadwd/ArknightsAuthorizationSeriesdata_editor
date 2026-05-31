@@ -1,0 +1,19 @@
+{
+  "github": {
+    "username": "",
+    "token": "",
+    "authenticated": false
+  },
+  "repo": {
+    "gitcode": {
+      "owner": "huangjinzhou1",
+      "name": "ArknightsAuthorization_Series"
+    },
+    "github": {
+      "owner": "awadwd",
+      "name": "ArknightsAuthorization_Series-mirror"
+    }
+  },
+  "targetBranch": "dev",
+  "baseBranch": "main"
+}
