@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "name": "arknights-api",
+  "env": {
+    "GITHUB_CLIENT_ID": "@github_client_id",
+    "GITHUB_CLIENT_SECRET": "@github_client_secret",
+    "GITHUB_REDIRECT_URI": "https://arknights-api.vercel.app/api/auth/callback"
+  }
+}

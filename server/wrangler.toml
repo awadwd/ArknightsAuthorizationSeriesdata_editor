@@ -2,5 +2,9 @@ name = "arknights-api"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
+[[kv_namespaces]]
+binding = "AUTH_STORE"
+id = "0e723597d55345dea472308ba8b34f0b"
+
 [vars]
 GITHUB_REDIRECT_URI = "https://arknights-api.2726269007.workers.dev/api/auth/callback"

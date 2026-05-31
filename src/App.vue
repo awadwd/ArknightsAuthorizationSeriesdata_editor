@@ -572,8 +572,9 @@
 import axios from 'axios'
 import { useI18n, t as translate } from './i18n'
 
-// 后端地址：开发环境用 localhost，生产环境用环境变量
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+// 使用相对路径（Cloudflare Pages Functions 同域）
+// 开发环境代理到 localhost:3000，生产环境直接用相对路径
+const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:3000' : ''
 axios.defaults.baseURL = API_BASE_URL
 axios.defaults.timeout = 0
 
