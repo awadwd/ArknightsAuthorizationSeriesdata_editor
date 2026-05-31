@@ -101,19 +101,32 @@
           <p class="auth-subtitle">{{ t('auth.subtitle') }}</p>
 
           <div class="alert alert-info">
-            <strong>GitHub:</strong> awadwd / ArknightsAuthorization_Series-mirror
+            <strong>GitHub:</strong> awadwd / ArknightsAuthorization_Series-mirror<br>
+            <strong>GitCode:</strong> huangjinzhou1 / ArknightsAuthorization_Series
           </div>
 
+          <!-- OAuth 登录按钮 -->
           <div style="text-align: center; margin-bottom: 24px;">
-            <button
-              class="btn btn-primary btn-lg"
-              @click="oauthLogin"
-              :disabled="loading"
-              type="button"
-            >
-              <span v-if="loading" class="animate-spin">&#8635;</span>
-              &#128274; {{ t('auth.oauthLogin') || 'GitHub 登录授权' }}
-            </button>
+            <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+              <button
+                class="btn btn-primary btn-lg"
+                @click="oauthLogin('github')"
+                :disabled="loading"
+                type="button"
+              >
+                <span v-if="loading" class="animate-spin">&#8635;</span>
+                &#128274; GitHub 登录
+              </button>
+              <button
+                class="btn btn-secondary btn-lg"
+                @click="oauthLogin('gitcode')"
+                :disabled="loading"
+                type="button"
+              >
+                <span v-if="loading" class="animate-spin">&#8635;</span>
+                &#128274; GitCode 登录
+              </button>
+            </div>
           </div>
 
           <div class="alert alert-warning" style="margin-bottom: 20px;">
@@ -786,9 +799,9 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       }
     },
 
-    oauthLogin() {
+    oauthLogin(source = 'github') {
       this.loading = true
-      axios.get('/api/auth/login').then(res => {
+      axios.get(`/api/auth/login?source=${source}`).then(res => {
         const authUrl = res.data.authUrl
         
         // 检测是否为移动端
@@ -800,9 +813,9 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
           window.location.href = authUrl
         } else {
           // PC端：弹窗
-          const popup = window.open(authUrl, 'github-oauth', 'width=600,height=700,scrollbars=yes')
+          const popup = window.open(authUrl, 'oauth-window', 'width=600,height=700,scrollbars=yes')
           if (!popup) {
-            this.authError = '请允许弹出窗口以完成 GitHub 授权'
+            this.authError = '请允许弹出窗口以完成授权'
             this.loading = false
             return
           }
@@ -815,6 +828,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
               localStorage.setItem('user', event.data.user)
               localStorage.setItem('gh_token', event.data.token)
               localStorage.setItem('gh_user', event.data.user)
+              localStorage.setItem('auth_source', event.data.source || source)
               this.loading = false
               window.removeEventListener('message', handleMessage)
             }
