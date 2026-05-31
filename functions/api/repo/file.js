@@ -77,9 +77,19 @@ export async function onRequest(context) {
     let content;
 
     if (source === 'gitcode') {
-      // GitCode 是 GitLab 系，raw URL 必须加 /-/
+      // GitCode = GitLab 系，用 API v5 获取 raw 文件
+      // 关键：project ID 必须双重编码 %252F，否则 fetch() 会把 %2F 解码成 /
       const config = REPO_CONFIG.gitcode;
-      const rawUrl = `https://gitcode.com/${config.owner}/${config.repo}/-/raw/${config.branch}/${filename}`;
+      const projectId = `${config.owner}%252F${config.repo}`;
+      const encodedFile = encodeURIComponent(filename);
+      const apiUrl = `https://gitcode.com/api/v5/projects/${projectId}/repository/files/${encodedFile}/raw?ref=${config.branch}`;
+
+      const res = await fetch(apiUrl, {
+        headers: {
+          'Authorization': `Bearer ${auth.token}`,
+          'Accept': '*/*',
+        },
+      });
 
       const res = await fetch(rawUrl, {
         headers: {
@@ -94,7 +104,7 @@ export async function onRequest(context) {
           error: 'File not found',
           status: res.status,
           detail: errText.slice(0, 500),
-          requestUrl: rawUrl,
+          apiUrl: apiUrl,
           authSource: auth.source,
         }), {
           status: res.status === 404 ? 404 : 500,
