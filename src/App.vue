@@ -964,6 +964,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
         retail_price: '',
         type: 'true',
         replicate: 'false',
+        replicate_date: '',
         Box_ImageUrl: '',
       }
       this.boxFormCharacters = []
