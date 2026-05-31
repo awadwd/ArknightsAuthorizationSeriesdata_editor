@@ -4,19 +4,18 @@ const REPO_CONFIG = {
     owner: 'awadwd',
     repo: 'ArknightsAuthorization_Series-mirror',
     branch: 'dev',
-    apiBase: 'https://api.github.com',
-    prPath: (owner, repo) => `/repos/${owner}/${repo}/pulls`,
   },
   gitcode: {
     owner: 'huangjinzhou1',
     repo: 'ArknightsAuthorization_Series',
     branch: 'dev',
-    apiBase: 'https://gitcode.com/api/v5',
-    // GitCode = GitLab API: project ID is "owner%2Frepo"
-    projectId: 'huangjinzhou1%2FArknightsAuthorization_Series',
-    mrPath: () => '/projects/huangjinzhou1%2FArknightsAuthorization_Series/merge_requests',
   }
 };
+
+// GitCode 项目 ID：必须对 "/" 做双重编码，否则 fetch() 会解码 %2F 导致 404
+function gitcodeProjectId(owner, repo) {
+  return `${owner}%252F${repo}`; // fetch 解码一次后 → owner%2Frepo（服务器收到的正确格式）
+}
 
 async function getAuth(env) {
   const authData = await env.AUTH_STORE?.get('current_auth');
@@ -49,24 +48,25 @@ export async function onRequestPost(context) {
 
     if (source === 'gitcode') {
       // ============ GitCode (GitLab API) ============
-      const projectId = config.projectId;
+      const projectId = gitcodeProjectId(config.owner, config.repo);
       const branchName = `update/${filename.replace('.json', '')}-${Date.now()}`;
+      const apiBase = 'https://gitcode.com/api/v5';
 
-      // 1. Get file to obtain file SHA (GitLab uses "last_commit_id" or file blob)
+      // 1. 获取文件 SHA（用于后续更新）
       const fileRes = await fetch(
-        `${config.apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}?ref=${config.branch}`,
+        `${apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}?ref=${config.branch}`,
         { headers: { 'Authorization': `Bearer ${auth.token}`, 'Accept': 'application/json' } }
       );
 
-      let fileSha = null;
+      let lastCommitId = null;
       if (fileRes.ok) {
         const fileData = await fileRes.json();
-        fileSha = fileData.last_commit_id || fileData.commit_id;
+        lastCommitId = fileData.last_commit_id || fileData.commit_id || null;
       }
 
-      // 2. Create new branch from dev
+      // 2. 创建新分支
       const branchRes = await fetch(
-        `${config.apiBase}/projects/${projectId}/repository/branches?branch_name=${encodeURIComponent(branchName)}&ref=${encodeURIComponent(config.branch)}`,
+        `${apiBase}/projects/${projectId}/repository/branches?branch_name=${encodeURIComponent(branchName)}&ref=${encodeURIComponent(config.branch)}`,
         {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${auth.token}`, 'Accept': 'application/json' },
@@ -81,9 +81,18 @@ export async function onRequestPost(context) {
         });
       }
 
-      // 3. Update file on new branch
+      // 3. 更新文件（创建 commit）
+      const updateBody = {
+        branch: branchName,
+        content: content,
+        encoding: 'text',
+        commit_message: commitMessage,
+      };
+      // 如果获取到 lastCommitId，可以带上（某些 GitLab 版本需要）
+      if (lastCommitId) updateBody.last_commit_id = lastCommitId;
+
       const updateRes = await fetch(
-        `${config.apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}`,
+        `${apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}`,
         {
           method: 'PUT',
           headers: {
@@ -91,12 +100,7 @@ export async function onRequestPost(context) {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
           },
-          body: JSON.stringify({
-            branch: branchName,
-            content: content,
-            encoding: 'text',
-            commit_message: commitMessage,
-          }),
+          body: JSON.stringify(updateBody),
         }
       );
 
@@ -108,9 +112,9 @@ export async function onRequestPost(context) {
         });
       }
 
-      // 4. Create Merge Request (GitLab MR = GitHub PR)
+      // 4. 创建 Merge Request
       const mrRes = await fetch(
-        `${config.apiBase}/projects/${projectId}/merge_requests`,
+        `${apiBase}/projects/${projectId}/merge_requests`,
         {
           method: 'POST',
           headers: {
@@ -145,7 +149,7 @@ export async function onRequestPost(context) {
       const { owner, repo, branch } = config;
 
       // 1. Get file SHA
-      const fileRes = await fetch(`${config.apiBase}/repos/${owner}/${repo}/contents/${filename}?ref=${branch}`, {
+      const fileRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}?ref=${branch}`, {
         headers: { 'Authorization': `Bearer ${auth.token}`, 'User-Agent': 'Arknights-Tool' },
       });
 
@@ -162,13 +166,13 @@ export async function onRequestPost(context) {
       // 2. Create new branch
       const branchName = `update/${filename.replace('.json', '')}-${Date.now()}`;
 
-      const refRes = await fetch(`${config.apiBase}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+      const refRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
         headers: { 'Authorization': `Bearer ${auth.token}`, 'User-Agent': 'Arknights-Tool' },
       });
       const refData = await refRes.json();
       const baseSha = refData.object.sha;
 
-      await fetch(`${config.apiBase}/repos/${owner}/${repo}/git/refs`, {
+      await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${auth.token}`,
@@ -179,7 +183,7 @@ export async function onRequestPost(context) {
       });
 
       // 3. Update file
-      const updateRes = await fetch(`${config.apiBase}/repos/${owner}/${repo}/contents/${filename}`, {
+      const updateRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${auth.token}`,
@@ -203,7 +207,7 @@ export async function onRequestPost(context) {
       }
 
       // 4. Create PR
-      const prRes = await fetch(`${config.apiBase}/repos/${owner}/${repo}/pulls`, {
+      const prRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${auth.token}`,
