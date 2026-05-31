@@ -39,28 +39,29 @@ export async function onRequestPost(context) {
 
   try {
     if (source === 'gitcode') {
-      // GitCode: 直接尝试拉取文件验证仓库可访问（比项目 API 更可靠）
-      const rawUrl = `https://gitcode.com/${config.owner}/${config.repo}/raw/branch/${config.branch}/Box_Id.json`;
-      const res = await fetch(rawUrl, {
+      // GitCode: 用 API 检查项目是否存在
+      // 项目 ID 需要 encodeURIComponent("owner/repo") = "owner%2Frepo"
+      const projectId = encodeURIComponent(`${config.owner}/${config.repo}`);
+      const res = await fetch(`https://gitcode.com/api/v5/projects/${projectId}`, {
         headers: {
           'Authorization': `Bearer ${auth.token}`,
           'Accept': 'application/json',
         },
       });
 
-      if (res.ok || res.status === 404) {
-        // 404 说明仓库存在但文件不存在，也算仓库可访问
+      if (res.ok) {
         return new Response(JSON.stringify({ success: true, message: 'Repository accessible', source }), {
           headers: { 'Content-Type': 'application/json' }
         });
       } else {
-        return new Response(JSON.stringify({ success: false, error: `Status ${res.status}` }), {
+        const err = await res.json().catch(() => ({}));
+        return new Response(JSON.stringify({ success: false, error: err.message || `Status ${res.status}` }), {
           status: res.status,
           headers: { 'Content-Type': 'application/json' }
         });
       }
     } else {
-      // GitHub: 用 API 检查仓库
+      // GitHub
       const res = await fetch(`https://api.github.com/repos/${config.owner}/${config.repo}`, {
         headers: {
           'Authorization': `Bearer ${auth.token}`,
