@@ -42,9 +42,12 @@ export async function onRequestPost(context) {
 
   try {
     if (source === 'gitcode') {
-      // GitCode (GitLab): OAuth access_token 用 Authorization: Bearer
-      // PRIVATE-TOKEN 只接受 PAT，不接受 OAuth token
-      const res = await fetch('https://gitcode.com/api/v5/user', {
+      const config = REPO_CONFIG.gitcode;
+      // 双重编码 project ID，fetch() 解码一次后剩 %2F
+      const projectId = `${config.owner}%252F${config.repo}`;
+      const apiUrl = `https://gitcode.com/api/v5/projects/${projectId}`;
+
+      const res = await fetch(apiUrl, {
         headers: {
           'Authorization': `Bearer ${auth.token}`,
           'Accept': 'application/json',
@@ -52,11 +55,12 @@ export async function onRequestPost(context) {
       });
 
       if (res.ok) {
-        const userData = await res.json();
+        const proj = await res.json();
         return new Response(JSON.stringify({
           success: true,
-          message: `GitCode 认证成功: ${userData.username || userData.login || userData.name}`,
-          source
+          message: `GitCode 仓库可访问: ${proj.path_with_namespace || proj.name}`,
+          source,
+          projectId: proj.id,
         }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -64,7 +68,8 @@ export async function onRequestPost(context) {
         const errText = await res.text().catch(() => '');
         return new Response(JSON.stringify({
           success: false,
-          error: `GitCode 认证失败 (${res.status}): ${errText.slice(0, 200)}`
+          error: `GitCode 仓库不可访问 (${res.status}): ${errText.slice(0, 300)}`,
+          apiUrl,
         }), {
           status: res.status,
           headers: { 'Content-Type': 'application/json' }
