@@ -263,7 +263,7 @@
             </div>
 
             <!-- Visual Editor for Box_id.json -->
-            <div v-if="editMode === 'visual' && activeFile === 'Box_id.json'" class="visual-editor">
+            <div v-if="editMode === 'visual' && activeFile === 'Box_Id.json'" class="visual-editor">
               <!-- Search & Add -->
               <div style="display:flex; gap:12px; margin-bottom:24px; flex-wrap:wrap;">
                 <input
@@ -603,9 +603,9 @@ export default {
       isRepoReady: localStorage.getItem('repoReady') === 'true',
 
       // Editor
-      activeFile: 'Box_id.json',
+      activeFile: 'Box_Id.json',
       files: [
-        { value: 'Box_id.json', original: '' },
+        { value: 'Box_Id.json', original: '' },
         { value: 'Version.json', original: '' },
         { value: 'searchWord.json', original: '' },
       ],
