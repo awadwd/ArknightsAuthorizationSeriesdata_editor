@@ -279,16 +279,21 @@
                   </button>
                 </div>
               </div>
-              <div class="file-selector" style="margin-top:16px;">
-                <button
-                  v-for="f in files"
-                  :key="f.value"
-                  class="file-btn"
-                  :class="{ active: activeFile === f.value }"
-                  @click="switchFile(f.value)"
-                  type="button"
-                >
-                  {{ t(`editor.files.${f.value.replace('.json','')}`) }}
+              <div class="file-selector" style="margin-top:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                  <button
+                    v-for="f in files"
+                    :key="f.value"
+                    class="file-btn"
+                    :class="{ active: activeFile === f.value }"
+                    @click="switchFile(f.value)"
+                    type="button"
+                  >
+                    {{ t(`editor.files.${f.value.replace('.json','')}`) }}
+                  </button>
+                </div>
+                <button class="btn btn-sm btn-secondary" @click="exportZip" type="button" style="white-space:nowrap;">
+                  &#128230; {{ t('editor.exportZip') || '导出 ZIP' }}
                 </button>
               </div>
             </div>
@@ -312,7 +317,7 @@
               <!-- Box Cards -->
               <div class="box-grid">
                 <div
-                  v-for="(box, idx) in filteredBoxes"
+                  v-for="(box, idx) in paginatedBoxes"
                   :key="box.Box_id || idx"
                   class="box-card"
                 >
@@ -320,8 +325,8 @@
                   <div class="box-card-header">
                     <span class="box-id">{{ box.Box_id || '新盒号' }}</span>
                     <div style="display:flex; gap:4px;">
-                      <button class="btn btn-sm btn-ghost" @click="editBox(idx)" type="button">&#9998;</button>
-                      <button class="btn btn-sm btn-ghost" @click="deleteBox(idx)" type="button" style="color:#d32f2f;">&#128465;</button>
+                      <button class="btn btn-sm btn-ghost" @click="editBox(paginatedBoxesStartIdx + idx)" type="button">&#9998;</button>
+                      <button class="btn btn-sm btn-ghost" @click="deleteBox(paginatedBoxesStartIdx + idx)" type="button" style="color:#d32f2f;">&#128465;</button>
                     </div>
                   </div>
 
@@ -380,8 +385,31 @@
               </div>
 
               <!-- Empty State -->
-              <div v-if="filteredBoxes.length === 0" class="panel center" style="padding:48px;">
+              <div v-if="paginatedBoxes.length === 0" class="panel center" style="padding:48px;">
                 <p class="text-muted">{{ t('editor.noResults') || '没有找到匹配的盒号' }}</p>
+              </div>
+
+              <!-- Pagination -->
+              <div v-if="totalPages > 1" class="pagination" style="display:flex; justify-content:center; align-items:center; gap:8px; margin-top:24px; flex-wrap:wrap;">
+                <button
+                  class="btn btn-sm btn-secondary"
+                  :disabled="currentPage <= 1"
+                  @click="currentPage--"
+                  type="button"
+                >
+                  &laquo; {{ t('editor.prevPage') || '上一页' }}
+                </button>
+                <span style="padding:0 12px; font-size:14px;">
+                  {{ currentPage }} / {{ totalPages }}
+                </span>
+                <button
+                  class="btn btn-sm btn-secondary"
+                  :disabled="currentPage >= totalPages"
+                  @click="currentPage++"
+                  type="button"
+                >
+                  {{ t('editor.nextPage') || '下一页' }} &raquo;
+                </button>
               </div>
             </div>
 
@@ -661,10 +689,6 @@ export default {
       currentPage: 1,
       itemsPerPage: 10,
 
-      // Pagination
-      currentPage: 1,
-      itemsPerPage: 10,
-
       // Box modal
       showBoxModal: false,
       editingBoxIndex: -1,
@@ -715,6 +739,23 @@ export default {
         }
         return false
       })
+    },
+
+    // Pagination
+    totalPages() {
+      if (!this.filteredBoxes || !Array.isArray(this.filteredBoxes)) return 0;
+      return Math.ceil(this.filteredBoxes.length / this.itemsPerPage);
+    },
+
+    paginatedBoxes() {
+      if (!this.filteredBoxes || !Array.isArray(this.filteredBoxes)) return [];
+      const start = (this.currentPage - 1) * this.itemsPerPage;
+      const end = start + this.itemsPerPage;
+      return this.filteredBoxes.slice(start, end);
+    },
+
+    paginatedBoxesStartIdx() {
+      return (this.currentPage - 1) * this.itemsPerPage;
     },
 
     manualCommandsText() {
@@ -1373,5 +1414,15 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
     max-width: 100%;
     margin: 10px;
   }
+}
+
+/* Pagination */
+.pagination .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination .btn-sm {
+  min-width: 80px;
 }
 </style>
