@@ -657,6 +657,14 @@ export default {
       prUrl: '',
       manualCopied: false,
 
+      // Pagination
+      currentPage: 1,
+      itemsPerPage: 10,
+
+      // Pagination
+      currentPage: 1,
+      itemsPerPage: 10,
+
       // Box modal
       showBoxModal: false,
       editingBoxIndex: -1,
@@ -1092,6 +1100,34 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
         setTimeout(() => { this.manualCopied = false }, 2000)
       } catch {
         // Fallback
+      }
+    },
+
+    // Export ZIP
+    async exportZip() {
+      if (!this.jsonInput.trim()) {
+        alert('请先加载数据再导出')
+        return
+      }
+      try {
+        const JSZip = window.JSZip;
+        if (!JSZip) throw new Error('JSZip 未加载');
+        const zip = new JSZip();
+        // 打包三个 JSON 文件
+        for (const file of this.files) {
+          const content = file.value === this.activeFile ? this.jsonInput : file.original || '';
+          zip.file(file.value, content);
+        }
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `arknights-auth-data-${new Date().toISOString().slice(0, 10)}.zip`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error('导出 ZIP 失败:', err);
+        alert('导出失败: ' + err.message);
       }
     },
 

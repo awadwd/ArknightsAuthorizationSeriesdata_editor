@@ -1,4 +1,4 @@
-// Cloudflare Pages Function - Get File Content
+// Cloudflare Pages Function - Get File Content (GitCode bypass WAF)
 // Route: /api/repo/file?filename=xxx&source=github|gitcode
 
 const REPO_CONFIG = {
@@ -7,8 +7,6 @@ const REPO_CONFIG = {
     repo: 'ArknightsAuthorization_Series-mirror',
     branch: 'dev',
   },
-  // GitCode 源不再走后端，改浏览器直连
-  // 保留 github 配置供后端使用
 };
 
 async function getAuth(env) {
@@ -51,17 +49,6 @@ export async function onRequest(context) {
   const filename = url.searchParams.get('filename');
   const source = url.searchParams.get('source') || auth.source || 'github';
 
-  // GitCode 源不走后端，直接返回错误提示
-  if (source === 'gitcode') {
-    return new Response(JSON.stringify({
-      error: 'GitCode source should use browser direct fetch, not backend API',
-      useBrowserFetch: true,
-    }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-    });
-  }
-
   if (!filename) {
     return new Response(JSON.stringify({ error: 'Missing filename' }), {
       status: 400,
@@ -72,31 +59,66 @@ export async function onRequest(context) {
   try {
     let content;
 
-    // GitHub only (GitCode 走浏览器直连)
-    const config = REPO_CONFIG.github;
-    const rawUrl = `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}/${filename}`;
+    if (source === 'gitcode') {
+      // GitCode: 用 raw 文件 URL（不经过 API，绕过 WAF）
+      // 参考：https://gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/raw/dev/Box_Id.json
+      const config = { owner: 'huangjinzhou1', repo: 'ArknightsAuthorization_Series', branch: 'dev' };
+      const rawUrl = `https://gitcode.com/${config.owner}/${config.repo}/raw/${config.branch}/${encodeURIComponent(filename)}`;
 
-    const fetchOptions = {
-      headers: {
-        'User-Agent': 'Arknights-Tool',
-        'Cache-Control': 'no-cache',
-      },
-    };
-
-    if (auth.token) {
-      fetchOptions.headers['Authorization'] = `Bearer ${auth.token}`;
-    }
-
-    const res = await fetch(rawUrl + `?t=${Date.now()}`, fetchOptions);
-
-    if (!res.ok) {
-      return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
-        status: res.status === 404 ? 404 : 500,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      const res = await fetch(rawUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+        },
+        redirect: 'follow',
       });
-    }
 
-    content = await res.text();
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        return new Response(JSON.stringify({
+          error: 'GitCode raw file not found',
+          status: res.status,
+          detail: errText.slice(0, 500),
+          rawUrl,
+        }), {
+          status: res.status === 404 ? 404 : 500,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+      }
+
+      content = await res.text();
+
+    } else {
+      // GitHub: raw.githubusercontent.com
+      const config = REPO_CONFIG.github;
+      const rawUrl = `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}/${filename}`;
+
+      const fetchOptions = {
+        headers: {
+          'User-Agent': 'Arknights-Tool',
+          'Cache-Control': 'no-cache',
+        },
+      };
+
+      if (auth.token) {
+        fetchOptions.headers['Authorization'] = `Bearer ${auth.token}`;
+      }
+
+      const res = await fetch(rawUrl + `?t=${Date.now()}`, fetchOptions);
+
+      if (!res.ok) {
+        return new Response(JSON.stringify({ error: 'File not found', status: res.status }), {
+          status: res.status === 404 ? 404 : 500,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+      }
+
+      content = await res.text();
+    }
 
     return new Response(JSON.stringify({ content }), {
       headers: {
