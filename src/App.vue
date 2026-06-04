@@ -638,7 +638,7 @@ export default {
 
   setup() {
     const { locale, localeOptions, setLocale } = useI18n()
-    return { locale, localeOptions, setLocale }
+    return { locale, localeOptions, setLocale, tm }
   },
 
   data() {
