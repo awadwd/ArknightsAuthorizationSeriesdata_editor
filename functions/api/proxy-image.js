@@ -30,12 +30,18 @@ export async function onRequest(context) {
       });
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);  // 10秒超时
+
     const res = await fetch(imageUrl, {
       headers: { 
         'User-Agent': 'Mozilla/5.0', 
         'Referer': urlObj.origin 
       },
+      signal: controller.signal,
     });
+
+    clearTimeout(timeout);
 
     if (!res.ok) {
       return new Response(JSON.stringify({ error: 'Failed to fetch' }), {
@@ -54,6 +60,12 @@ export async function onRequest(context) {
       }
     });
   } catch (error) {
+    if (error.name === 'AbortError') {
+      return new Response(JSON.stringify({ error: 'Request timeout' }), {
+        status: 504,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }

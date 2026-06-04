@@ -1,4 +1,15 @@
 // Cloudflare Pages Function - Save and Create PR (GitHub & GitCode)
+
+// 正确的 UTF-8 到 base64 编码（Cloudflare Workers 兼容）
+function utf8ToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 const REPO_CONFIG = {
   github: {
     owner: 'awadwd',
@@ -190,7 +201,7 @@ export async function onRequestPost(context) {
         headers: githubHeaders(token),
         body: JSON.stringify({
           message: commitMessage,
-          content: content,  // GitHub API 接受原始字符串（会自动 base64 编码）
+          content: utf8ToBase64(content),  // 必须 base64 编码（支持 UTF-8）
           sha,
           branch: branchName,
         }),
