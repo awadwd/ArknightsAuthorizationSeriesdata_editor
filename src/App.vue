@@ -700,7 +700,7 @@ export default {
     },
 
     tmFeatureList() {
-      return this.tm('about.featureList') || []
+      return tm('about.featureList') || []
     },
 
     currentRepo() {
