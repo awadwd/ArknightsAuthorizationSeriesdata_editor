@@ -625,6 +625,7 @@
 
 <script>
 import axios from 'axios'
+import { computed } from 'vue'
 import { useI18n, t as translate, tm } from './i18n'
 
 // 使用相对路径（Cloudflare Pages Functions 同域）
@@ -638,7 +639,8 @@ export default {
 
   setup() {
     const { locale, localeOptions, setLocale } = useI18n()
-    return { locale, localeOptions, setLocale, tm }
+    const tmFeatureList = computed(() => tm('about.featureList') || [])
+    return { locale, localeOptions, setLocale, tm, tmFeatureList }
   },
 
   data() {
@@ -699,9 +701,6 @@ export default {
       return opt ? opt.label : 'Language'
     },
 
-    tmFeatureList() {
-      return tm('about.featureList') || []
-    },
 
     currentRepo() {
       return this.repoConfigs[this.repoSource] || this.repoConfigs.github
