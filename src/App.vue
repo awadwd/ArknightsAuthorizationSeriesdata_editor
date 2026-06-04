@@ -1099,7 +1099,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       if (!url) return ''
       // B站图床和PRTS图床需要代理
       if (url.includes('hdslb.com') || url.includes('prts.wiki')) {
-        return `http://localhost:3000/api/proxy-image?url=${encodeURIComponent(url)}`
+        return `${API_BASE_URL}/api/proxy-image?url=${encodeURIComponent(url)}`
       }
       return url
     },
