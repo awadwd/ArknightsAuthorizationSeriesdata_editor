@@ -4,11 +4,7 @@
     <header class="site-header">
       <div class="brand-lockup">
         <div class="brand-logo">
-          <span class="dot dot-1"></span>
-          <span class="dot dot-2"></span>
-          <span class="dot dot-3"></span>
-          <span class="dot dot-4"></span>
-          <span class="brand-logo-icon">&#9635;</span>
+          <img src="/app-logo.png" alt="Logo" style="height:32px;width:auto;" />
         </div>
         <span class="brand-name">{{ t('app.title') }}</span>
       </div>
@@ -63,27 +59,27 @@
           <div class="feature-card">
             <div class="feature-icon">&#9998;</div>
             <h3 class="feature-card-title">{{ t('nav.editor') }}</h3>
-            <p class="feature-card-text">{{ t('about.featureList[0]') }}</p>
+            <p class="feature-card-text">{{ tmFeatureList()[0] }}</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon">&#10003;</div>
             <h3 class="feature-card-title">JSON {{ t('editor.validJson') }}</h3>
-            <p class="feature-card-text">{{ t('about.featureList[1]') }}</p>
+            <p class="feature-card-text">{{ tmFeatureList()[1] }}</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon">&#128274;</div>
             <h3 class="feature-card-title">GitHub {{ t('auth.title') }}</h3>
-            <p class="feature-card-text">{{ t('about.featureList[2]') }}</p>
+            <p class="feature-card-text">{{ tmFeatureList()[2] }}</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon">&#128259;</div>
             <h3 class="feature-card-title">Pull Request</h3>
-            <p class="feature-card-text">{{ t('about.featureList[3]') }}</p>
+            <p class="feature-card-text">{{ tmFeatureList()[3] }}</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon">&#127760;</div>
             <h3 class="feature-card-title">i18n</h3>
-            <p class="feature-card-text">{{ t('about.featureList[4]') }}</p>
+            <p class="feature-card-text">{{ tmFeatureList()[4] }}</p>
           </div>
         </div>
 
@@ -629,7 +625,7 @@
 
 <script>
 import axios from 'axios'
-import { useI18n, t as translate } from './i18n'
+import { useI18n, t as translate, tm } from './i18n'
 
 // 使用相对路径（Cloudflare Pages Functions 同域）
 // 开发环境代理到 localhost:3000，生产环境直接用相对路径
@@ -701,6 +697,10 @@ export default {
     currentLangLabel() {
       const opt = this.localeOptions.find(o => o.code === this.locale)
       return opt ? opt.label : 'Language'
+    },
+
+    tmFeatureList() {
+      return this.tm('about.featureList') || []
     },
 
     currentRepo() {

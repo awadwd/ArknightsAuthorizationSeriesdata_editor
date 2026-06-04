@@ -85,6 +85,9 @@ export const messages = {
       confirmDelete: '确定删除此盒号？',
       cancel: '取消',
       saveBtn: '保存',
+      prevPage: '上一页',
+      nextPage: '下一页',
+      exportZip: '导出 ZIP',
     },
     pr: {
       success: 'PR 创建成功！',
@@ -218,6 +221,9 @@ export const messages = {
       confirmDelete: '確定刪除此盒號？',
       cancel: '取消',
       saveBtn: '儲存',
+      prevPage: '上一頁',
+      nextPage: '下一頁',
+      exportZip: '匯出 ZIP',
     },
     pr: {
       success: 'PR 建立成功！',
@@ -351,6 +357,9 @@ export const messages = {
       confirmDelete: 'Delete this box?',
       cancel: 'Cancel',
       saveBtn: 'Save',
+      prevPage: 'Prev',
+      nextPage: 'Next',
+      exportZip: 'Export ZIP',
     },
     pr: {
       success: 'PR created successfully!',
@@ -484,6 +493,9 @@ export const messages = {
       confirmDelete: 'このボックスを削除しますか？',
       cancel: 'キャンセル',
       saveBtn: '保存',
+      prevPage: '前へ',
+      nextPage: '次へ',
+      exportZip: 'ZIP出力',
     },
     pr: {
       success: 'PRの作成に成功しました！',
