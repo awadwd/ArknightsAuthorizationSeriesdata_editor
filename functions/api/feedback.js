@@ -1,4 +1,4 @@
-﻿// 反馈API - 接收用户反馈并保存到GitHub
+// 反馈API - 接收用户反馈并保存到GitHub
 // 使用原生fetch调用GitHub REST API
 
 export async function onRequestPost(context) {
@@ -9,9 +9,6 @@ export async function onRequestPost(context) {
     // 调试：打印所有环境变量名（不打印值）
     console.log('环境变量列表:', Object.keys(env));
     console.log('GITHUB_TOKEN存在:', !!env.GITHUB_TOKEN);
-    if (env.GITHUB_TOKEN) {
-      console.log('GITHUB_TOKEN长度:', env.GITHUB_TOKEN.length);
-    }
     
     // 验证必要字段
     if (!feedback.boxId || !feedback.type) {
@@ -39,8 +36,7 @@ export async function onRequestPost(context) {
           envKeys: envKeys,
           envKeysCount: envKeys.length,
           GITHUB_TOKEN_exists: false,
-          hint: '请在Cloudflare Pages Settings中配置环境变量 GITHUB_TOKEN',
-          allEnvValues: Object.fromEntries(Object.entries(env).map(([k, v]) => [k, typeof v === 'string' ? '***' + v.length + '***' : v]))
+          hint: '请在Cloudflare Pages Settings中配置环境变量 GITHUB_TOKEN'
         }
       }), {
         status: 500,
@@ -53,6 +49,9 @@ export async function onRequestPost(context) {
     
     // 清理Token（移除可能的换行符、空格）
     const cleanToken = githubToken.trim();
+    if (cleanToken !== githubToken) {
+      console.warn('GitHub Token包含首尾空格，已自动清理');
+    }
     
     const repoOwner = 'awadwd';
     const repoName = 'ArknightsAuthorizationSeriesdata_editor';
@@ -68,7 +67,8 @@ export async function onRequestPost(context) {
         {
           headers: {
             'Authorization': 'token ' + cleanToken,
-            'Accept': 'application/vnd.github.v3+json'
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'Cloudflare-Worker'
           }
         }
       );
@@ -143,7 +143,8 @@ export async function onRequestPost(context) {
         headers: {
           'Authorization': 'token ' + cleanToken,
           'Accept': 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'User-Agent': 'Cloudflare-Worker'
         },
         body: JSON.stringify(updateData)
       }
@@ -208,6 +209,7 @@ export async function onRequestGet(context) {
       });
     }
     
+    const cleanToken = githubToken.trim();
     const repoOwner = 'awadwd';
     const repoName = 'ArknightsAuthorizationSeriesdata_editor';
     const filePath = 'feedback.json';
@@ -216,8 +218,9 @@ export async function onRequestGet(context) {
       `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`,
       {
         headers: {
-          'Authorization': `token ${githubToken}`,
-          'Accept': 'application/vnd.github.v3+json'
+          'Authorization': 'token ' + cleanToken,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Cloudflare-Worker'
         }
       }
     );
@@ -247,7 +250,17 @@ export async function onRequestGet(context) {
         }
       });
     } else {
-      throw new Error(`GitHub API错误: ${getResponse.status}`);
+      const responseText = await getResponse.text();
+      let errorDetail = responseText;
+      
+      try {
+        const errorData = JSON.parse(responseText);
+        errorDetail = errorData.message || errorData.error || responseText;
+      } catch (e) {
+        // 如果不是JSON，使用原始文本
+      }
+      
+      throw new Error(`GitHub API错误 ${getResponse.status}: ${errorDetail}`);
     }
     
   } catch (error) {
@@ -275,4 +288,3 @@ export async function onRequestOptions(context) {
     }
   });
 }
-
