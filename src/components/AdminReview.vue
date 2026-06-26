@@ -392,7 +392,7 @@ export default {
 }
 </script>
 
-<style scoped>
+<style>
 .admin-review-container {
   max-width: 1200px;
   margin: 0 auto;
