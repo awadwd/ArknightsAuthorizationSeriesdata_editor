@@ -88,5 +88,23 @@
       "reviewTime": "2026-06-26T09:26:15.196Z",
       "reason": "请补充参考资料"
     }
+  },
+  {
+    "boxId": "1.0",
+    "type": "数据错误",
+    "modifyData": {
+      "retail_price": "20元/抽"
+    },
+    "references": [
+      {
+        "type": "text",
+        "content": "1232"
+      }
+    ],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-26T09:43:56.765Z",
+    "id": 1782467036765
   }
 ]
