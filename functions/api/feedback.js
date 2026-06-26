@@ -1,4 +1,4 @@
-// 反馈API - 接收用户反馈并保存到GitHub
+﻿// 反馈API - 接收用户反馈并保存到GitHub
 // 使用原生fetch调用GitHub REST API
 
 export async function onRequestPost(context) {
@@ -42,6 +42,9 @@ export async function onRequestPost(context) {
       });
     }
     
+    // 清理Token（移除可能的换行符、空格）
+    const cleanToken = githubToken.trim();
+    
     const repoOwner = 'awadwd';
     const repoName = 'ArknightsAuthorizationSeriesdata_editor';
     const filePath = 'feedback.json';
@@ -55,7 +58,7 @@ export async function onRequestPost(context) {
         `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`,
         {
           headers: {
-            'Authorization': `token ${githubToken}`,
+            'Authorization': `token ${cleanToken}`,
             'Accept': 'application/vnd.github.v3+json'
           }
         }
@@ -119,7 +122,7 @@ export async function onRequestPost(context) {
       {
         method: 'PUT',
         headers: {
-          'Authorization': `token ${githubToken}`,
+          'Authorization': `token ${cleanToken}`,
           'Accept': 'application/vnd.github.v3+json',
           'Content-Type': 'application/json'
         },
@@ -244,3 +247,4 @@ export async function onRequestOptions(context) {
     }
   });
 }
+
