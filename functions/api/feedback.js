@@ -18,7 +18,7 @@ export async function onRequestPost(context) {
       }), {
         status: 400,
         headers: { 
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
         }
       });
@@ -36,12 +36,12 @@ export async function onRequestPost(context) {
           envKeys: envKeys,
           envKeysCount: envKeys.length,
           GITHUB_TOKEN_exists: false,
-          hint: '请在Cloudflare Pages Settings中配置环境变量 GITHUB_TOKEN'
+          hint: '请在Cloudflare Pages Settings中配置环境变�?GITHUB_TOKEN'
         }
       }), {
         status: 500,
         headers: { 
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
         }
       });
@@ -76,7 +76,7 @@ export async function onRequestPost(context) {
       if (getResponse.ok) {
       const fileData = await getResponse.json();
       fileSha = fileData.sha;
-      // 解码base64内容（处理UTF-8）
+      // 解码base64内容（处理UTF-8�?
       const binaryString = atob(fileData.content);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
@@ -85,7 +85,7 @@ export async function onRequestPost(context) {
       const content = new TextDecoder('utf-8').decode(bytes);
       feedbackList = JSON.parse(content);
     } else if (getResponse.status === 404) {
-        // 文件不存在，创建新数组
+        // 文件不存在，创建新数�?
         feedbackList = [];
       } else {
         // 正确处理非JSON错误响应
@@ -97,36 +97,36 @@ export async function onRequestPost(context) {
           const errorData = JSON.parse(responseText);
           errorDetail = errorData.message || errorData.error || responseText;
         } catch (e) {
-          // 如果不是JSON，使用原始文本
+          // 如果不是JSON，使用原始文�?
         }
         
         throw new Error(`GitHub API错误 ${getResponse.status}: ${errorDetail}`);
       }
     } catch (error) {
       console.error('读取feedback.json失败:', error);
-      // 如果是404以外的错误，返回错误
+      // 如果�?04以外的错误，返回错误
       if (error.message.includes('404') === false && error.message.includes('Not Found') === false) {
         return new Response(JSON.stringify({ 
           success: false, 
           error: '读取反馈数据失败',
           debug: {
             message: error.message,
-            hint: '请检查GitHub Token权限和仓库名称'
+            hint: '请检查GitHub Token权限和仓库名�?
           }
         }), {
           status: 500,
           headers: { 
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
             'Access-Control-Allow-Origin': '*'
           }
         });
       }
     }
     
-    // 2. 添加新反馈
+    // 2. 添加新反�?
     feedback.id = Date.now(); // 简单ID生成
     feedback.createTime = new Date().toISOString();
-    feedback.status = 'pending'; // 待审核
+    feedback.status = 'pending'; // 待审�?
     feedbackList.push(feedback);
     
     // 3. 写回GitHub
@@ -156,7 +156,7 @@ export async function onRequestPost(context) {
         headers: {
           'Authorization': 'token ' + cleanToken,
           'Accept': 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           'User-Agent': 'Cloudflare-Worker'
         },
         body: JSON.stringify(updateData)
@@ -171,7 +171,7 @@ export async function onRequestPost(context) {
         const errorData = JSON.parse(responseText);
         errorDetail = errorData.message || errorData.error || responseText;
       } catch (e) {
-        // 如果不是JSON，使用原始文本
+        // 如果不是JSON，使用原始文�?
       }
       
       throw new Error(`GitHub API更新失败 ${updateResponse.status}: ${errorDetail}`);
@@ -183,7 +183,7 @@ export async function onRequestPost(context) {
       id: feedback.id
     }), {
       headers: { 
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*'
       }
     });
@@ -196,7 +196,7 @@ export async function onRequestPost(context) {
     }), {
       status: 500,
       headers: { 
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*'
       }
     });
@@ -216,7 +216,7 @@ export async function onRequestGet(context) {
       }), {
         status: 500,
         headers: { 
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
         }
       });
@@ -240,7 +240,7 @@ export async function onRequestGet(context) {
     
     if (getResponse.ok) {
       const fileData = await getResponse.json();
-      // 解码base64内容（处理UTF-8）
+      // 解码base64内容（处理UTF-8�?
       const binaryString = atob(fileData.content);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
@@ -254,7 +254,7 @@ export async function onRequestGet(context) {
         data: feedbackList
       }), {
         headers: { 
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
         }
       });
@@ -264,7 +264,7 @@ export async function onRequestGet(context) {
         data: []
       }), {
         headers: { 
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
         }
       });
@@ -276,7 +276,7 @@ export async function onRequestGet(context) {
         const errorData = JSON.parse(responseText);
         errorDetail = errorData.message || errorData.error || responseText;
       } catch (e) {
-        // 如果不是JSON，使用原始文本
+        // 如果不是JSON，使用原始文�?
       }
       
       throw new Error(`GitHub API错误 ${getResponse.status}: ${errorDetail}`);
@@ -290,14 +290,14 @@ export async function onRequestGet(context) {
     }), {
       status: 500,
       headers: { 
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*'
       }
     });
   }
 }
 
-// 处理OPTIONS请求（CORS预检）
+// 处理OPTIONS请求（CORS预检�?
 export async function onRequestOptions(context) {
   return new Response(null, {
     headers: {
