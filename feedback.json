@@ -161,5 +161,19 @@
     "createTime": "2026-06-26T10:44:07.237Z",
     "privacyAgreed": true,
     "id": 1782470647237
+  },
+  {
+    "boxId": "2.0",
+    "type": "数据错误",
+    "modifyData": {
+      "size_material": "114"
+    },
+    "references": [],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-26T11:19:42.554Z",
+    "privacyAgreed": true,
+    "id": 1782472782554
   }
 ]
