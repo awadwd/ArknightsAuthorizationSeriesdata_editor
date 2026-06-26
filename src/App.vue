@@ -13,6 +13,9 @@
         <a href="#" :class="{ active: view === 'editor' }" @click.prevent="setView('editor')">
           {{ t('nav.editor') }}
         </a>
+        <a href="#" :class="{ active: view === 'review' }" @click.prevent="setView('review')" v-if="isAuthenticated">
+          反馈审核
+        </a>
         <a href="#" :class="{ active: view === 'about' }" @click.prevent="setView('about')">
           {{ t('nav.about') }}
         </a>
@@ -47,6 +50,12 @@
 
     <!-- Main Content -->
     <main class="site-main">
+      <!-- Review View -->
+      <AdminReview 
+        v-if="view === 'review' && isAuthenticated" 
+        :username="username"
+      />
+      
       <!-- About View -->
       <div v-if="view === 'about'" class="section">
         <div class="section-header">
@@ -626,15 +635,20 @@
 <script>
 import axios from 'axios'
 import { useI18n, t as translate, tm } from './i18n'
+import AdminReview from './components/AdminReview.vue'
 
 // 使用相对路径（Cloudflare Pages Functions 同域）
-// 开发环境代理到 localhost:3000，生产环境直接用相对路径
+// 开发环境代理到 localhost:3000，生产环境直接使用相对路径
 const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:3000' : ''
 axios.defaults.baseURL = API_BASE_URL
 axios.defaults.timeout = 0
 
 export default {
   name: 'App',
+  
+  components: {
+    AdminReview
+  },
 
   setup() {
     const { locale, localeOptions, setLocale } = useI18n()
