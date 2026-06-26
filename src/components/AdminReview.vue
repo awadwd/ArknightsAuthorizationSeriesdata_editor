@@ -228,12 +228,16 @@ export default {
   },
   methods: {
     // 加载反馈数据
-    loadFeedbacks() {
-      // 从localStorage加载（实际应该从服务器加载）
+    async loadFeedbacks() {
       try {
-        const stored = localStorage.getItem('feedbackList')
-        if (stored) {
-          this.feedbacks = JSON.parse(stored)
+        const response = await fetch('/api/feedback')
+        if (response.ok) {
+          const result = await response.json()
+          if (result.success) {
+            this.feedbacks = result.data || []
+          }
+        } else {
+          console.error('加载反馈失败:', response.statusText)
         }
       } catch (e) {
         console.error('加载反馈失败:', e)
