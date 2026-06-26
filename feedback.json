@@ -1,1 +1,15 @@
-[]
+[
+  {
+    "boxId": "2.0",
+    "type": "数据错误",
+    "modifyData": {
+      "type": "盲抽"
+    },
+    "references": [],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-26T08:39:08.918Z",
+    "id": 1782463148918
+  }
+]
