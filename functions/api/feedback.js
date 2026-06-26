@@ -70,15 +70,21 @@ export async function onRequestPost(context) {
         // 文件不存在，创建新数组
         feedbackList = [];
       } else {
-        throw new Error(`GitHub API错误: ${getResponse.status}`);
+        // 返回详细的GitHub API错误信息
+        const errorData = await getResponse.json();
+        throw new Error(`GitHub API错误 ${getResponse.status}: ${errorData.message}`);
       }
     } catch (error) {
       console.error('读取feedback.json失败:', error);
       // 如果是404以外的错误，返回错误
-      if (error.message.includes('404') === false) {
+      if (error.message.includes('404') === false && error.message.includes('Not Found') === false) {
         return new Response(JSON.stringify({ 
           success: false, 
-          error: '读取反馈数据失败' 
+          error: '读取反馈数据失败',
+          debug: {
+            message: error.message,
+            hint: '请检查GitHub Token权限和仓库名称'
+          }
         }), {
           status: 500,
           headers: { 
@@ -123,7 +129,7 @@ export async function onRequestPost(context) {
     
     if (!updateResponse.ok) {
       const errorData = await updateResponse.json();
-      throw new Error(`GitHub API更新失败: ${errorData.message}`);
+      throw new Error(`GitHub API更新失败 ${updateResponse.status}: ${errorData.message}`);
     }
     
     return new Response(JSON.stringify({ 
