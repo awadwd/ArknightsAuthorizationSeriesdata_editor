@@ -26,9 +26,14 @@
     "references": [],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-06-26T08:44:06.072Z",
-    "id": 1782463446072
+    "id": 1782463446072,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-26T09:26:25.742Z",
+      "reason": "请补充参考资料"
+    }
   },
   {
     "boxId": "5.0",
