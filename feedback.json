@@ -1,9 +1,9 @@
 [
   {
     "boxId": "2.0",
-    "type": "数据错误",
+    "type": "æ°æ®éè¯¯",
     "modifyData": {
-      "type": "盲抽"
+      "type": "ç²æ½"
     },
     "references": [],
     "description": "",
@@ -11,5 +11,18 @@
     "status": "pending",
     "createTime": "2026-06-26T08:39:08.918Z",
     "id": 1782463148918
+  },
+  {
+    "boxId": "4.0",
+    "type": "数据错误",
+    "modifyData": {
+      "replicate": "未复刻"
+    },
+    "references": [],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-26T08:44:06.072Z",
+    "id": 1782463446072
   }
 ]
