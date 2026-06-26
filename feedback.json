@@ -75,8 +75,13 @@
     "references": [],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-06-26T08:59:57.653Z",
-    "id": 1782464397653
+    "id": 1782464397653,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-26T09:26:15.196Z",
+      "reason": "请补充参考资料"
+    }
   }
 ]
