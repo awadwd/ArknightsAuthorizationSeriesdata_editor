@@ -1,8 +1,10 @@
 // 反馈API - 接收用户反馈并保存到GitHub
+// 使用原生fetch调用GitHub REST API
+
 export async function onRequestPost(context) {
   try {
-    const { env } = context;
-    const feedback = await context.request.json();
+    const { request, env } = context;
+    const feedback = await request.json();
     
     // 验证必要字段
     if (!feedback.boxId || !feedback.type) {
@@ -18,56 +20,104 @@ export async function onRequestPost(context) {
       });
     }
     
-    // 读取现有的feedback.json
-    let feedbackList = [];
-    try {
-      const feedbackFile = await env.GITHUB_API.repos.getContent({
-        owner: 'awadwd',
-        repo: 'ArknightsAuthorizationSeriesdata_editor',
-        path: 'feedback.json'
+    // 从环境变量获取GitHub Token
+    const githubToken = env.GITHUB_TOKEN;
+    if (!githubToken) {
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: '服务器配置错误：缺少GitHub Token' 
+      }), {
+        status: 500,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
       });
+    }
+    
+    const repoOwner = 'awadwd';
+    const repoName = 'ArknightsAuthorizationSeriesdata_editor';
+    const filePath = 'feedback.json';
+    
+    // 1. 读取现有的feedback.json
+    let feedbackList = [];
+    let fileSha = null;
+    
+    try {
+      const getResponse = await fetch(
+        `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`,
+        {
+          headers: {
+            'Authorization': `token ${githubToken}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        }
+      );
       
-      // 解码并解析现有数据
-      const content = atob(feedbackFile.data.content);
-      feedbackList = JSON.parse(content);
-    } catch (error) {
-      // 文件不存在，创建新数组
-      if (error.status === 404) {
+      if (getResponse.ok) {
+        const fileData = await getResponse.json();
+        fileSha = fileData.sha;
+        const content = atob(fileData.content);
+        feedbackList = JSON.parse(content);
+      } else if (getResponse.status === 404) {
+        // 文件不存在，创建新数组
         feedbackList = [];
       } else {
-        throw error;
+        throw new Error(`GitHub API错误: ${getResponse.status}`);
+      }
+    } catch (error) {
+      console.error('读取feedback.json失败:', error);
+      // 如果是404以外的错误，返回错误
+      if (error.message.includes('404') === false) {
+        return new Response(JSON.stringify({ 
+          success: false, 
+          error: '读取反馈数据失败' 
+        }), {
+          status: 500,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
       }
     }
     
-    // 添加新反馈
+    // 2. 添加新反馈
     feedback.id = Date.now(); // 简单ID生成
     feedback.createTime = new Date().toISOString();
     feedback.status = 'pending'; // 待审核
     feedbackList.push(feedback);
     
-    // 写回GitHub
-    const content = btoa(JSON.stringify(feedbackList, null, 2));
-    const params = {
-      owner: 'awadwd',
-      repo: 'ArknightsAuthorizationSeriesdata_editor',
-      path: 'feedback.json',
+    // 3. 写回GitHub
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(feedbackList, null, 2))));
+    
+    const updateData = {
       message: `新增反馈: ${feedback.boxId} - ${feedback.type}`,
-      content: content
+      content: content,
+      branch: 'master'
     };
     
-    // 如果文件已存在，需要提供sha
-    try {
-      const existingFile = await env.GITHUB_API.repos.getContent({
-        owner: 'awadwd',
-        repo: 'ArknightsAuthorizationSeriesdata_editor',
-        path: 'feedback.json'
-      });
-      params.sha = existingFile.data.sha;
-    } catch (e) {
-      // 文件不存在，不需要sha
+    if (fileSha) {
+      updateData.sha = fileSha;
     }
     
-    await env.GITHUB_API.repos.createOrUpdateFileContents(params);
+    const updateResponse = await fetch(
+      `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updateData)
+      }
+    );
+    
+    if (!updateResponse.ok) {
+      const errorData = await updateResponse.json();
+      throw new Error(`GitHub API更新失败: ${errorData.message}`);
+    }
     
     return new Response(JSON.stringify({ 
       success: true,
@@ -95,12 +145,88 @@ export async function onRequestPost(context) {
   }
 }
 
+// 处理GET请求（获取反馈列表）
+export async function onRequestGet(context) {
+  try {
+    const { env } = context;
+    
+    const githubToken = env.GITHUB_TOKEN;
+    if (!githubToken) {
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: '服务器配置错误：缺少GitHub Token' 
+      }), {
+        status: 500,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+    
+    const repoOwner = 'awadwd';
+    const repoName = 'ArknightsAuthorizationSeriesdata_editor';
+    const filePath = 'feedback.json';
+    
+    const getResponse = await fetch(
+      `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`,
+      {
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      }
+    );
+    
+    if (getResponse.ok) {
+      const fileData = await getResponse.json();
+      const content = atob(fileData.content);
+      const feedbackList = JSON.parse(content);
+      
+      return new Response(JSON.stringify({ 
+        success: true,
+        data: feedbackList
+      }), {
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    } else if (getResponse.status === 404) {
+      return new Response(JSON.stringify({ 
+        success: true,
+        data: []
+      }), {
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    } else {
+      throw new Error(`GitHub API错误: ${getResponse.status}`);
+    }
+    
+  } catch (error) {
+    console.error('读取反馈列表失败:', error);
+    return new Response(JSON.stringify({ 
+      success: false, 
+      error: error.message 
+    }), {
+      status: 500,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      }
+    });
+  }
+}
+
 // 处理OPTIONS请求（CORS预检）
 export async function onRequestOptions(context) {
   return new Response(null, {
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type'
     }
   });
