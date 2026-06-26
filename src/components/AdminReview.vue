@@ -230,10 +230,9 @@ export default {
     // 加载反馈数据
     async loadFeedbacks() {
       try {
-        // 使用绝对URL（Cloudflare Pages域名）
-        const apiUrl = 'https://arknightstoolworkspace.pages.dev/api/feedback';
+        // 使用相对路径（同一域名下）
+        const response = await fetch('/api/feedback')
         
-        const response = await fetch(apiUrl)
         if (response.ok) {
           const result = await response.json()
           if (result.success) {
@@ -241,10 +240,13 @@ export default {
             console.log('加载反馈成功:', this.feedbacks.length, '条')
           }
         } else {
-          console.error('加载反馈失败:', response.statusText)
+          console.error('加载反馈失败:', response.status, response.statusText)
+          const errorText = await response.text()
+          console.error('错误详情:', errorText)
         }
       } catch (e) {
         console.error('加载反馈失败:', e)
+        console.error('错误详情:', e.message)
       }
     },
 
