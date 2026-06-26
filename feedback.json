@@ -8,9 +8,14 @@
     "references": [],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-06-26T08:39:08.918Z",
-    "id": 1782463148918
+    "id": 1782463148918,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-26T08:52:29.340Z",
+      "reason": "不能为空"
+    }
   },
   {
     "boxId": "4.0",
