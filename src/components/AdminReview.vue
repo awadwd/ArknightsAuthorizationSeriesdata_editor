@@ -397,6 +397,8 @@ export default {
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px;
+  display: block !important; /* 强制显示 */
+  visibility: visible !important; /* 强制可见 */
 }
 
 /* 统计卡片 */
@@ -452,9 +454,10 @@ export default {
 
 /* 反馈列表 */
 .feedback-list {
-  display: flex;
+  display: flex !important; /* 强制显示 */
   flex-direction: column;
   gap: 16px;
+  visibility: visible !important; /* 强制可见 */
 }
 
 .feedback-card {
@@ -463,6 +466,8 @@ export default {
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   border-left: 4px solid #999;
+  display: block !important; /* 强制显示 */
+  visibility: visible !important; /* 强制可见 */
 }
 
 .feedback-card.status-pending {
