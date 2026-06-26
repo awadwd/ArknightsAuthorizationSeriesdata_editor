@@ -230,16 +230,15 @@ export default {
     // 加载反馈数据
     async loadFeedbacks() {
       try {
-        // 使用绝对路径（Cloudflare Pages域名）
-        const apiUrl = window.location.hostname === 'localhost' 
-          ? 'http://localhost:8788/api/feedback' // 本地开发用wrangler
-          : '/api/feedback';
+        // 使用绝对URL（Cloudflare Pages域名）
+        const apiUrl = 'https://arknightstoolworkspace.pages.dev/api/feedback';
         
         const response = await fetch(apiUrl)
         if (response.ok) {
           const result = await response.json()
           if (result.success) {
             this.feedbacks = result.data || []
+            console.log('加载反馈成功:', this.feedbacks.length, '条')
           }
         } else {
           console.error('加载反馈失败:', response.statusText)
