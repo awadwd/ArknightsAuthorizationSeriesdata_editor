@@ -55,5 +55,18 @@
     "status": "pending",
     "createTime": "2026-06-26T08:53:02.726Z",
     "id": 1782463982726
+  },
+  {
+    "boxId": "5.0",
+    "type": "数据错误",
+    "modifyData": {
+      "replicate": "未复刻"
+    },
+    "references": [],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-26T08:59:57.653Z",
+    "id": 1782464397653
   }
 ]
