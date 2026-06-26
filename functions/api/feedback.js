@@ -6,6 +6,13 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     const feedback = await request.json();
     
+    // 调试：打印所有环境变量名（不打印值）
+    console.log('环境变量列表:', Object.keys(env));
+    console.log('GITHUB_TOKEN存在:', !!env.GITHUB_TOKEN);
+    if (env.GITHUB_TOKEN) {
+      console.log('GITHUB_TOKEN长度:', env.GITHUB_TOKEN.length);
+    }
+    
     // 验证必要字段
     if (!feedback.boxId || !feedback.type) {
       return new Response(JSON.stringify({ 
@@ -30,8 +37,10 @@ export async function onRequestPost(context) {
         error: '服务器配置错误：缺少GitHub Token',
         debug: {
           envKeys: envKeys,
+          envKeysCount: envKeys.length,
           GITHUB_TOKEN_exists: false,
-          hint: '请在Cloudflare Pages Settings中配置环境变量 GITHUB_TOKEN'
+          hint: '请在Cloudflare Pages Settings中配置环境变量 GITHUB_TOKEN',
+          allEnvValues: Object.fromEntries(Object.entries(env).map(([k, v]) => [k, typeof v === 'string' ? '***' + v.length + '***' : v]))
         }
       }), {
         status: 500,
