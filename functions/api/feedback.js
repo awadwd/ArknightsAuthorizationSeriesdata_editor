@@ -74,11 +74,17 @@ export async function onRequestPost(context) {
       );
       
       if (getResponse.ok) {
-        const fileData = await getResponse.json();
-        fileSha = fileData.sha;
-        const content = atob(fileData.content);
-        feedbackList = JSON.parse(content);
-      } else if (getResponse.status === 404) {
+      const fileData = await getResponse.json();
+      fileSha = fileData.sha;
+      // 解码base64内容（处理UTF-8）
+      const binaryString = atob(fileData.content);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const content = new TextDecoder('utf-8').decode(bytes);
+      feedbackList = JSON.parse(content);
+    } else if (getResponse.status === 404) {
         // 文件不存在，创建新数组
         feedbackList = [];
       } else {
@@ -124,7 +130,14 @@ export async function onRequestPost(context) {
     feedbackList.push(feedback);
     
     // 3. 写回GitHub
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(feedbackList, null, 2))));
+    // 使用TextEncoder进行UTF-8编码，然后转为base64
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify(feedbackList, null, 2));
+    let binary = '';
+    for (let i = 0; i < data.length; i++) {
+      binary += String.fromCharCode(data[i]);
+    }
+    const content = btoa(binary);
     
     const updateData = {
       message: `新增反馈: ${feedback.boxId} - ${feedback.type}`,
@@ -227,7 +240,13 @@ export async function onRequestGet(context) {
     
     if (getResponse.ok) {
       const fileData = await getResponse.json();
-      const content = atob(fileData.content);
+      // 解码base64内容（处理UTF-8）
+      const binaryString = atob(fileData.content);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const content = new TextDecoder('utf-8').decode(bytes);
       const feedbackList = JSON.parse(content);
       
       return new Response(JSON.stringify({ 

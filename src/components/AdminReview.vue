@@ -293,23 +293,32 @@ export default {
 
     // 通过审核
     async approveFeedback(feedback, index) {
-      if (!confirm('确认通过此反馈？通过后将自动更新数据。')) {
+      if (!confirm('确认通过此反馈？\n\n建议：审核通过后系统将创建Pull Request，由仓库管理员最终审核。')) {
         return
       }
 
       try {
-        // 更新反馈状态
-        feedback.status = 'approved'
-        feedback.reviewInfo = {
-          reviewer: this.username,
-          reviewTime: new Date().toISOString()
+        // TODO: 创建GitHub Pull Request
+        // 需要基于feedback.modifyData修改Box_Id.json，然后创建PR
+        alert('功能开发中：将通过创建Pull Request的方式更新数据。');
+        
+        // 临时方案：只更新状态为approved
+        const response = await fetch('/api/feedback-update', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            feedbackId: feedback.id,
+            status: 'approved'
+          })
+        });
+        
+        if (response.ok) {
+          feedback.status = 'approved';
+          alert('审核通过！');
+        } else {
+          const result = await response.json();
+          alert('操作失败: ' + result.error);
         }
-
-        // TODO: 实际更新Box_Id.json的逻辑
-        // 需要调用GitHub API更新数据
-
-        this.saveFeedbacks()
-        alert('审核通过！数据已更新。')
       } catch (e) {
         console.error('审核失败:', e)
         alert('审核失败: ' + e.message)
@@ -325,22 +334,41 @@ export default {
     },
 
     // 确认拒绝
-    confirmReject() {
+    async confirmReject() {
       if (!this.rejectReason.trim()) {
         alert('请输入拒绝原因')
         return
       }
 
-      this.currentFeedback.status = 'rejected'
-      this.currentFeedback.reviewInfo = {
-        reviewer: this.username,
-        reviewTime: new Date().toISOString(),
-        reason: this.rejectReason
+      try {
+        const response = await fetch('/api/feedback-update', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            feedbackId: this.currentFeedback.id,
+            status: 'rejected',
+            reason: this.rejectReason
+          })
+        });
+        
+        if (response.ok) {
+          this.currentFeedback.status = 'rejected';
+          this.currentFeedback.reviewInfo = {
+            reviewer: this.username,
+            reviewTime: new Date().toISOString(),
+            reason: this.rejectReason
+          };
+          
+          this.showRejectModal = false;
+          alert('已拒绝此反馈');
+        } else {
+          const result = await response.json();
+          alert('操作失败: ' + result.error);
+        }
+      } catch (e) {
+        console.error('拒绝失败:', e);
+        alert('拒绝失败: ' + e.message);
       }
-
-      this.saveFeedbacks()
-      this.showRejectModal = false
-      alert('已拒绝此反馈')
     }
   }
 }
