@@ -1,9 +1,9 @@
 [
   {
     "boxId": "2.0",
-    "type": "Ã¦ÂÂ°Ã¦ÂÂ®Ã©ÂÂÃ¨Â¯Â¯",
+    "type": "数据错误",
     "modifyData": {
-      "type": "Ã§ÂÂ²Ã¦ÂÂ½"
+      "type": "皮肤"
     },
     "references": [],
     "description": "",
@@ -19,9 +19,9 @@
   },
   {
     "boxId": "4.0",
-    "type": "æ°æ®éè¯¯",
+    "type": "数据错误",
     "modifyData": {
-      "replicate": "æªå¤å»"
+      "replicate": "未复刻"
     },
     "references": [],
     "description": "",
