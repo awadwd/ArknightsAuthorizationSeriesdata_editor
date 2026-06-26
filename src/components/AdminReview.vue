@@ -57,6 +57,12 @@
 
     <!-- 反馈列表 -->
     <div class="feedback-list">
+      <!-- 调试信息 -->
+      <div style="background: #f0f0f0; padding: 10px; margin-bottom: 16px; border-radius: 8px;">
+        <p>调试: 共 {{ feedbacks.length }} 条反馈，筛选后 {{ filteredFeedbacks.length }} 条</p>
+        <p>当前筛选: {{ currentFilter }}</p>
+      </div>
+      
       <div v-if="filteredFeedbacks.length === 0" class="empty-state">
         <div class="empty-icon">📭</div>
         <p>暂无反馈数据</p>
