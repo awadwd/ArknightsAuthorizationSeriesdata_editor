@@ -230,7 +230,12 @@ export default {
     // 加载反馈数据
     async loadFeedbacks() {
       try {
-        const response = await fetch('/api/feedback')
+        // 使用绝对路径（Cloudflare Pages域名）
+        const apiUrl = window.location.hostname === 'localhost' 
+          ? 'http://localhost:8788/api/feedback' // 本地开发用wrangler
+          : '/api/feedback';
+        
+        const response = await fetch(apiUrl)
         if (response.ok) {
           const result = await response.json()
           if (result.success) {
