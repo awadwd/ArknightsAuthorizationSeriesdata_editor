@@ -129,5 +129,23 @@
     "status": "pending",
     "createTime": "2026-06-26T09:58:02.195Z",
     "id": 1782467882195
+  },
+  {
+    "boxId": "1.0",
+    "type": "数据错误",
+    "modifyData": {
+      "retail_price": "10元/抽"
+    },
+    "references": [
+      {
+        "type": "text",
+        "content": "afas"
+      }
+    ],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-26T10:23:09.851Z",
+    "id": 1782469389851
   }
 ]
