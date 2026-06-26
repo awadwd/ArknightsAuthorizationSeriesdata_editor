@@ -189,5 +189,19 @@
     "createTime": "2026-06-26T11:40:00.948Z",
     "privacyAgreed": true,
     "id": 1782474000948
+  },
+  {
+    "boxId": "1.0",
+    "type": "数据错误",
+    "modifyData": {
+      "replicate": "未复刻"
+    },
+    "references": [],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-26T11:44:57.523Z",
+    "privacyAgreed": true,
+    "id": 1782474297523
   }
 ]
