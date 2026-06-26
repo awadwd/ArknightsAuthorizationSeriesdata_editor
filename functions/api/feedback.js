@@ -82,9 +82,19 @@ export async function onRequestPost(context) {
         // 文件不存在，创建新数组
         feedbackList = [];
       } else {
-        // 返回详细的GitHub API错误信息
-        const errorData = await getResponse.json();
-        throw new Error(`GitHub API错误 ${getResponse.status}: ${errorData.message}`);
+        // 正确处理非JSON错误响应
+        const responseText = await getResponse.text();
+        let errorDetail = responseText;
+        
+        // 尝试解析为JSON（如果可能）
+        try {
+          const errorData = JSON.parse(responseText);
+          errorDetail = errorData.message || errorData.error || responseText;
+        } catch (e) {
+          // 如果不是JSON，使用原始文本
+        }
+        
+        throw new Error(`GitHub API错误 ${getResponse.status}: ${errorDetail}`);
       }
     } catch (error) {
       console.error('读取feedback.json失败:', error);
@@ -140,8 +150,17 @@ export async function onRequestPost(context) {
     );
     
     if (!updateResponse.ok) {
-      const errorData = await updateResponse.json();
-      throw new Error(`GitHub API更新失败 ${updateResponse.status}: ${errorData.message}`);
+      const responseText = await updateResponse.text();
+      let errorDetail = responseText;
+      
+      try {
+        const errorData = JSON.parse(responseText);
+        errorDetail = errorData.message || errorData.error || responseText;
+      } catch (e) {
+        // 如果不是JSON，使用原始文本
+      }
+      
+      throw new Error(`GitHub API更新失败 ${updateResponse.status}: ${errorDetail}`);
     }
     
     return new Response(JSON.stringify({ 
