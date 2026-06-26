@@ -103,8 +103,13 @@
     ],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-06-26T09:43:56.765Z",
-    "id": 1782467036765
+    "id": 1782467036765,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-26T09:44:59.520Z",
+      "reason": "无参考资料"
+    }
   }
 ]
