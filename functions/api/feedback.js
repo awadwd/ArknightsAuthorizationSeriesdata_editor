@@ -23,9 +23,16 @@ export async function onRequestPost(context) {
     // 从环境变量获取GitHub Token
     const githubToken = env.GITHUB_TOKEN;
     if (!githubToken) {
+      // 调试信息：返回环境变量状态（不暴露真实值）
+      const envKeys = Object.keys(env);
       return new Response(JSON.stringify({ 
         success: false, 
-        error: '服务器配置错误：缺少GitHub Token' 
+        error: '服务器配置错误：缺少GitHub Token',
+        debug: {
+          envKeys: envKeys,
+          GITHUB_TOKEN_exists: false,
+          hint: '请在Cloudflare Pages Settings中配置环境变量 GITHUB_TOKEN'
+        }
       }), {
         status: 500,
         headers: { 
