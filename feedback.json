@@ -1,9 +1,9 @@
 [
   {
     "boxId": "2.0",
-    "type": "æ°æ®éè¯¯",
+    "type": "Ã¦ÂÂ°Ã¦ÂÂ®Ã©ÂÂÃ¨Â¯Â¯",
     "modifyData": {
-      "type": "ç²æ½"
+      "type": "Ã§ÂÂ²Ã¦ÂÂ½"
     },
     "references": [],
     "description": "",
@@ -14,9 +14,9 @@
   },
   {
     "boxId": "4.0",
-    "type": "数据错误",
+    "type": "æ°æ®éè¯¯",
     "modifyData": {
-      "replicate": "未复刻"
+      "replicate": "æªå¤å»"
     },
     "references": [],
     "description": "",
@@ -24,5 +24,18 @@
     "status": "pending",
     "createTime": "2026-06-26T08:44:06.072Z",
     "id": 1782463446072
+  },
+  {
+    "boxId": "5.0",
+    "type": "数据错误",
+    "modifyData": {
+      "retail_price": "30元/抽"
+    },
+    "references": [],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-26T08:45:09.357Z",
+    "id": 1782463509357
   }
 ]
