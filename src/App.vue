@@ -52,8 +52,8 @@
     <main class="site-main">
       <!-- Review View -->
       <AdminReview 
-        v-if="view === 'review' && isAuthenticated" 
-        :username="username"
+        v-if="view === 'review'" 
+        :username="username || 'admin'"
       />
       
       <!-- About View -->
