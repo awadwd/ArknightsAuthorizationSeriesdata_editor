@@ -58,7 +58,7 @@ export async function onRequestPost(context) {
         `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`,
         {
           headers: {
-            'Authorization': `token ${cleanToken}`,
+            'Authorization': 'token ' + cleanToken,
             'Accept': 'application/vnd.github.v3+json'
           }
         }
@@ -122,7 +122,7 @@ export async function onRequestPost(context) {
       {
         method: 'PUT',
         headers: {
-          'Authorization': `token ${cleanToken}`,
+          'Authorization': 'token ' + cleanToken,
           'Accept': 'application/vnd.github.v3+json',
           'Content-Type': 'application/json'
         },
