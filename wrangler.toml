@@ -1,9 +1,6 @@
 name = "arknightsauthorizationseriesdataeditor"
 compatibility_date = "2024-01-01"
 
-[assets]
-directory = "./dist"
-binding = "ASSETS"
-
-[build]
-command = "npm run build"
+# Cloudflare Pages 部署配置
+# 在 Cloudflare Pages 中连接GitHub仓库后，会自动识别 functions/ 目录
+# 无需在 wrangler.toml 中配置 assets 或 build
