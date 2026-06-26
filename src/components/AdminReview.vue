@@ -101,13 +101,25 @@
           <!-- 原始数据 -->
           <div v-if="feedback.originalData" class="info-row">
             <label>原始数据:</label>
-            <div class="data-box error">{{ feedback.originalData }}</div>
+            <div class="data-box error">
+              <div v-if="feedback.originalData.boxId">盒号: {{ feedback.originalData.boxId }}</div>
+              <div v-if="feedback.originalData.releaseDate">发售日期: {{ feedback.originalData.releaseDate }}</div>
+              <div v-if="feedback.originalData.price">价格: {{ feedback.originalData.price }}</div>
+              <div v-if="feedback.originalData.type">类型: {{ feedback.originalData.type }}</div>
+              <div v-if="feedback.originalData.isReissue !== undefined">是否复刻: {{ feedback.originalData.isReissue ? '是' : '否' }}</div>
+            </div>
           </div>
 
           <!-- 正确数据 -->
           <div class="info-row">
             <label>正确数据:</label>
-            <div class="data-box success">{{ feedback.correctData }}</div>
+            <div class="data-box success">
+              <div v-if="feedback.correctData.boxId">盒号: {{ feedback.correctData.boxId }}</div>
+              <div v-if="feedback.correctData.releaseDate">发售日期: {{ feedback.correctData.releaseDate }}</div>
+              <div v-if="feedback.correctData.price">价格: {{ feedback.correctData.price }}</div>
+              <div v-if="feedback.correctData.type">类型: {{ feedback.correctData.type }}</div>
+              <div v-if="feedback.correctData.isReissue !== undefined">是否复刻: {{ feedback.correctData.isReissue ? '是' : '否' }}</div>
+            </div>
           </div>
 
           <!-- 详细说明 -->
