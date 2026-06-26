@@ -242,8 +242,14 @@ export default {
         if (response.ok) {
           const result = await response.json()
           if (result.success) {
-            this.feedbacks = result.data || []
+            // 使用 splice 确保响应式更新
+            this.feedbacks.splice(0, this.feedbacks.length, ...(result.data || []))
             console.log('加载反馈成功:', this.feedbacks.length, '条')
+            
+            // 强制重新渲染
+            this.$nextTick(() => {
+              console.log('组件已重新渲染')
+            })
           }
         } else {
           console.error('加载反馈失败:', response.status, response.statusText)
