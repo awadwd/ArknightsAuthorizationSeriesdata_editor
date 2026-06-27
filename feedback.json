@@ -203,5 +203,24 @@
     "createTime": "2026-06-26T11:44:57.523Z",
     "privacyAgreed": true,
     "id": 1782474297523
+  },
+  {
+    "boxId": "1.0",
+    "type": "数据错误",
+    "modifyData": {
+      "retail_price": "25元/盒"
+    },
+    "references": [
+      {
+        "type": "image",
+        "content": "wxfile://tmp_55062d1d26365d0630eaab30fd545402b6190d3c28ca0de7.jpg"
+      }
+    ],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-06-27T04:01:22.268Z",
+    "privacyAgreed": true,
+    "id": 1782532882268
   }
 ]
