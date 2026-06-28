@@ -218,9 +218,14 @@
     ],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "approved",
     "createTime": "2026-06-27T04:01:22.268Z",
     "privacyAgreed": true,
-    "id": 1782532882268
+    "id": 1782532882268,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-28T04:37:55.791Z",
+      "reason": ""
+    }
   }
 ]
