@@ -149,9 +149,14 @@
     ],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-06-26T10:23:09.851Z",
-    "id": 1782469389851
+    "id": 1782469389851,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-30T06:26:39.983Z",
+      "reason": "请附带参考资料"
+    }
   },
   {
     "boxId": "1.0",
