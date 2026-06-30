@@ -205,10 +205,15 @@
     "references": [],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-06-26T11:40:00.948Z",
     "privacyAgreed": true,
-    "id": 1782474000948
+    "id": 1782474000948,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-30T06:27:03.252Z",
+      "reason": "请附带参考资料"
+    }
   },
   {
     "boxId": "1.0",
