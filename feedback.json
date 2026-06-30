@@ -167,10 +167,15 @@
     "references": [],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-06-26T10:44:07.237Z",
     "privacyAgreed": true,
-    "id": 1782470647237
+    "id": 1782470647237,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-30T06:26:47.144Z",
+      "reason": "请附带参考资料"
+    }
   },
   {
     "boxId": "2.0",
