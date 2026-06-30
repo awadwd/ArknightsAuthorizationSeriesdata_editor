@@ -126,9 +126,14 @@
     ],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-06-26T09:58:02.195Z",
-    "id": 1782467882195
+    "id": 1782467882195,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-06-30T06:26:27.750Z",
+      "reason": "原数据无错误"
+    }
   },
   {
     "boxId": "1.0",
