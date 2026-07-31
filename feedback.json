@@ -257,5 +257,19 @@
       "reviewTime": "2026-06-28T04:37:55.791Z",
       "reason": ""
     }
+  },
+  {
+    "boxId": "嘉年华2022",
+    "type": "数据错误",
+    "modifyData": {
+      "release_date": "2026/06/15"
+    },
+    "references": [],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-07-31T13:51:53.043Z",
+    "privacyAgreed": true,
+    "id": 1785505913043
   }
 ]
