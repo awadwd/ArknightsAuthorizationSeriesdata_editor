@@ -267,9 +267,14 @@
     "references": [],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-07-31T13:51:53.043Z",
     "privacyAgreed": true,
-    "id": 1785505913043
+    "id": 1785505913043,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-08-06T18:36:13.083Z",
+      "reason": "经官方资料查询，目前小程序内收录的2022嘉年华发售时间无误"
+    }
   }
 ]
