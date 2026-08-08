@@ -276,5 +276,19 @@
       "reviewTime": "2026-08-06T18:36:13.083Z",
       "reason": "经官方资料查询，目前小程序内收录的2022嘉年华发售时间无误"
     }
+  },
+  {
+    "boxId": "1.0",
+    "type": "数据错误",
+    "modifyData": {
+      "replicate": "待定"
+    },
+    "references": [],
+    "description": "",
+    "contact": "",
+    "status": "pending",
+    "createTime": "2026-08-08T06:06:35.502Z",
+    "privacyAgreed": true,
+    "id": 1786169195502
   }
 ]
