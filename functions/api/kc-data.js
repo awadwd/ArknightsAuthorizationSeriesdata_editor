@@ -243,7 +243,7 @@ export const KC_DATA = {
 ],
   "AiToolsConfig": [
   {
-    "Enabled": true,
+    "Enabled": false,
     "created_at": "1771494445",
     "updated_at": "1788156482",
     "created_by": "91866855",
