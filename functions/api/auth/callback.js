@@ -72,8 +72,8 @@ export async function onRequest(context) {
 
     } else {
       const redirectUri = `${url.origin}/api/auth/callback`;
-      const clientId = oauth.githubClientId || env.GITHUB_CLIENT_ID;
-      const clientSecret = env.GITHUB_CLIENT_SECRET;
+      const clientId = oauth.githubClientId || env.GITHUB_CLIENT_ID || 'Ov23liE3h9mVLCbbzdHA';
+      const clientSecret = env.GITHUB_CLIENT_SECRET || 'ea15b10bf3f9e83a842d60542ef913156d3577fb';
 
       if (!clientId || !clientSecret) {
         return new Response('<h1>授权失败</h1><p>GitHub OAuth credentials not configured (env.GITHUB_CLIENT_ID / env.GITHUB_CLIENT_SECRET)</p>', {

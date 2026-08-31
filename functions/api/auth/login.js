@@ -22,7 +22,7 @@ export async function onRequest(context) {
     const scope = encodeURIComponent(oauth.gitcodeScope || 'user project');
     authUrl = `https://gitcode.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
   } else {
-    clientId = oauth.githubClientId || env.GITHUB_CLIENT_ID;
+    clientId = oauth.githubClientId || env.GITHUB_CLIENT_ID || 'Ov23liE3h9mVLCbbzdHA';
     redirectUri = `${url.origin}/api/auth/callback`;
     const scope = encodeURIComponent(oauth.githubScope || 'repo read:user');
     authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
