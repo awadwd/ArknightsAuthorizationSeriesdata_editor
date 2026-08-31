@@ -1,5 +1,5 @@
 // 反馈 API - 接收用户反馈并保存到 GitHub（反馈仓库 = 部署仓库自身）
-import { getAppConfig } from '../_lib/appConfig.js';
+import { getAppConfig } from './_lib/appConfig.js';
 
 // 反馈存储仓库固定为部署仓库自身（即本 Pages 项目对应的 GitHub 仓库）
 const FEEDBACK_REPO = { owner: 'awadwd', repo: 'ArknightsAuthorizationSeriesdata_editor' };
