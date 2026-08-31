@@ -36,7 +36,7 @@ export async function onRequestPost(context) {
           envKeys: envKeys,
           envKeysCount: envKeys.length,
           GITHUB_TOKEN_exists: false,
-          hint: '请在Cloudflare Pages Settings中配置环境变�?GITHUB_TOKEN'
+          hint: '请在Cloudflare Pages Settings中配置环境变�?GITHUB_TOKEN'
         }
       }), {
         status: 500,
@@ -76,7 +76,7 @@ export async function onRequestPost(context) {
       if (getResponse.ok) {
       const fileData = await getResponse.json();
       fileSha = fileData.sha;
-      // 解码base64内容（处理UTF-8�?
+      // 解码base64内容（处理UTF-8�?
       const binaryString = atob(fileData.content);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
@@ -85,7 +85,7 @@ export async function onRequestPost(context) {
       const content = new TextDecoder('utf-8').decode(bytes);
       feedbackList = JSON.parse(content);
     } else if (getResponse.status === 404) {
-        // 文件不存在，创建新数�?
+        // 文件不存在，创建新数�?
         feedbackList = [];
       } else {
         // 正确处理非JSON错误响应
@@ -97,21 +97,21 @@ export async function onRequestPost(context) {
           const errorData = JSON.parse(responseText);
           errorDetail = errorData.message || errorData.error || responseText;
         } catch (e) {
-          // 如果不是JSON，使用原始文�?
+          // 如果不是JSON，使用原始文�?
         }
         
         throw new Error(`GitHub API错误 ${getResponse.status}: ${errorDetail}`);
       }
     } catch (error) {
       console.error('读取feedback.json失败:', error);
-      // 如果�?04以外的错误，返回错误
+      // 如果�?04以外的错误，返回错误
       if (error.message.includes('404') === false && error.message.includes('Not Found') === false) {
         return new Response(JSON.stringify({ 
           success: false, 
           error: '读取反馈数据失败',
           debug: {
             message: error.message,
-            hint: '请检查GitHub Token权限和仓库名�?
+            hint: '请检查GitHub Token权限和仓库名称',
           }
         }), {
           status: 500,
@@ -123,10 +123,10 @@ export async function onRequestPost(context) {
       }
     }
     
-    // 2. 添加新反�?
+    // 2. 添加新反�?
     feedback.id = Date.now(); // 简单ID生成
     feedback.createTime = new Date().toISOString();
-    feedback.status = 'pending'; // 待审�?
+    feedback.status = 'pending'; // 待审�?
     feedbackList.push(feedback);
     
     // 3. 写回GitHub
@@ -171,7 +171,7 @@ export async function onRequestPost(context) {
         const errorData = JSON.parse(responseText);
         errorDetail = errorData.message || errorData.error || responseText;
       } catch (e) {
-        // 如果不是JSON，使用原始文�?
+        // 如果不是JSON，使用原始文�?
       }
       
       throw new Error(`GitHub API更新失败 ${updateResponse.status}: ${errorDetail}`);
@@ -240,7 +240,7 @@ export async function onRequestGet(context) {
     
     if (getResponse.ok) {
       const fileData = await getResponse.json();
-      // 解码base64内容（处理UTF-8�?
+      // 解码base64内容（处理UTF-8�?
       const binaryString = atob(fileData.content);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
@@ -276,7 +276,7 @@ export async function onRequestGet(context) {
         const errorData = JSON.parse(responseText);
         errorDetail = errorData.message || errorData.error || responseText;
       } catch (e) {
-        // 如果不是JSON，使用原始文�?
+        // 如果不是JSON，使用原始文�?
       }
       
       throw new Error(`GitHub API错误 ${getResponse.status}: ${errorDetail}`);
@@ -297,7 +297,7 @@ export async function onRequestGet(context) {
   }
 }
 
-// 处理OPTIONS请求（CORS预检�?
+// 处理OPTIONS请求（CORS预检�?
 export async function onRequestOptions(context) {
   return new Response(null, {
     headers: {
