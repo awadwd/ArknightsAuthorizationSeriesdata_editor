@@ -939,7 +939,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
     async checkOwnerStatus() {
       try {
         const res = await axios.get('/api/auth/status')
-        if (res.data && res.data.isAuthenticated) {
+        if (res.data && res.data.authenticated) {
           this.isOwner = !!res.data.isOwner
         } else {
           this.isOwner = false
