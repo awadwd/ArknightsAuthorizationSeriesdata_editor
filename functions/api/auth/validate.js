@@ -9,7 +9,7 @@ export async function onRequestPost(context) {
     const { username, token } = body;
 
     const userRes = await fetch('https://api.github.com/user', {
-      headers: { 'Authorization': Bearer , 'User-Agent': 'Arknights-Tool' },
+      headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Arknights-Tool' },
     });
 
     if (userRes.ok) {
@@ -17,7 +17,6 @@ export async function onRequestPost(context) {
       const login = user.login || username;
       const source = 'github';
 
-      // 存储到 KV
       await env.AUTH_STORE && env.AUTH_STORE.put('current_auth', JSON.stringify({
         username: login,
         token: token,

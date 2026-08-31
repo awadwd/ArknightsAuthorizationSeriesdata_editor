@@ -1,5 +1,5 @@
-// 应用配置：读 KV config key，fallback 到硬编码默认值。
-// 复用 AUTH_STORE 这个 KV namespace，key 区分（current_auth / config），无需新增 KV 绑定。
+// 应用配置：读 KV `config` key，fallback 到硬编码默认值。
+// 复用 AUTH_STORE 这个 KV namespace，key 区分（`current_auth` / `config`），无需新增 KV 绑定。
 // 硬编码 fallback 必须永远可用：保证首次部署 / KV 数据丢失 / 解析失败时系统仍能跑。
 
 export const DEFAULT_CONFIG = {
