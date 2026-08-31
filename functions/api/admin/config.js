@@ -1,5 +1,6 @@
 import { getAppConfig, saveAppConfig } from '../_lib/appConfig.js';
 import { isOwner } from '../_lib/owner.js';
+import { getAuthByRequest } from '../_lib/session.js';
 
 function cors() {
   return {
@@ -8,21 +9,6 @@ function cors() {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };
-}
-
-async function getAuth(env) {
-  try {
-    const raw = await env.AUTH_STORE && env.AUTH_STORE.get('current_auth');
-    if (!raw) return null;
-    const auth = JSON.parse(raw);
-    if (auth.expires && auth.expires < Date.now()) {
-      await env.AUTH_STORE.delete('current_auth');
-      return null;
-    }
-    return auth;
-  } catch (e) {
-    return null;
-  }
 }
 
 // GET /api/admin/config — 公开读（前端初始化需要）
@@ -39,7 +25,7 @@ export async function onRequestGet(context) {
 
 // POST /api/admin/config — owner-only 写
 export async function onRequestPost(context) {
-  const auth = await getAuth(context.env);
+  const auth = await getAuthByRequest(context.request, context.env);
   if (!auth) {
     return new Response(JSON.stringify({ success: false, error: 'not authenticated' }), {
       status: 401, headers: cors(),

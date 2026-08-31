@@ -1,5 +1,6 @@
 // Cloudflare Pages Function - Save and Create PR (GitHub & GitCode)
 import { getAppConfig } from '../_lib/appConfig.js';
+import { getAuthByRequest } from '../_lib/session.js';
 
 // 正确的 UTF-8 到 base64 编码（Cloudflare Workers 兼容）
 function utf8ToBase64(str) {
@@ -35,21 +36,10 @@ function githubHeaders(token) {
   };
 }
 
-async function getAuth(env) {
-  const authData = await env.AUTH_STORE?.get('current_auth');
-  if (!authData) return null;
-  const auth = JSON.parse(authData);
-  if (auth.expires && auth.expires < Date.now()) {
-    await env.AUTH_STORE?.delete('current_auth');
-    return null;
-  }
-  return auth;
-}
-
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  const auth = await getAuth(env);
+  const auth = await getAuthByRequest(request, env);
   if (!auth || !auth.authenticated) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), {
       status: 401,

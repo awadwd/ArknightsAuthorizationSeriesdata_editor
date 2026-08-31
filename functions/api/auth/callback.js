@@ -1,6 +1,7 @@
 // Cloudflare Pages Function - OAuth Callback (GitHub or GitCode)
 import { isOwner } from '../_lib/owner.js';
 import { getAppConfig } from '../_lib/appConfig.js';
+import { generateSid, sessionSetCookie, saveAuthBySid } from '../_lib/session.js';
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -109,14 +110,16 @@ export async function onRequest(context) {
     const username = userData.login || userData.username || 'unknown';
     const sourceLabel = source === 'gitcode' ? 'GitCode' : 'GitHub';
 
-    await env.AUTH_STORE.put('current_auth', JSON.stringify({
+    // Generate new session id, write KV under auth:${sid}, set httpOnly cookie
+    const sid = generateSid();
+    await saveAuthBySid(env, sid, {
       username,
       token: accessToken,
       source,
       isOwner: isOwner(username, source),
       authenticated: true,
-      expires: Date.now() + 86400000
-    }), { expirationTtl: 86400 });
+      expires: Date.now() + 30 * 24 * 3600 * 1000,
+    });
 
     return new Response(`
       <!DOCTYPE html>
@@ -161,7 +164,10 @@ export async function onRequest(context) {
       </body>
       </html>
     `, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Set-Cookie': sessionSetCookie(sid),
+      }
     });
   } catch (error) {
     return new Response(`<h1>授权失败</h1><p>${error.message}</p>`, {

@@ -1,21 +1,11 @@
 // Cloudflare Pages Function - Clone/Check Repo
 import { getAppConfig } from '../_lib/appConfig.js';
-
-async function getAuth(env) {
-  const authData = await env.AUTH_STORE?.get('current_auth');
-  if (!authData) return null;
-  const auth = JSON.parse(authData);
-  if (auth.expires && auth.expires < Date.now()) {
-    await env.AUTH_STORE?.delete('current_auth');
-    return null;
-  }
-  return auth;
-}
+import { getAuthByRequest } from '../_lib/session.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  const auth = await getAuth(env);
+  const auth = await getAuthByRequest(request, env);
   if (!auth || !auth.authenticated) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), {
       status: 401,

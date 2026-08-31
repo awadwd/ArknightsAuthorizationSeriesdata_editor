@@ -1,5 +1,6 @@
 // Cloudflare Pages Function - Validate Token
 import { isOwner } from '../_lib/owner.js';
+import { generateSid, sessionSetCookie, saveAuthBySid } from '../_lib/session.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -17,14 +18,15 @@ export async function onRequestPost(context) {
       const login = user.login || username;
       const source = 'github';
 
-      await env.AUTH_STORE && env.AUTH_STORE.put('current_auth', JSON.stringify({
+      const sid = generateSid();
+      await saveAuthBySid(env, sid, {
         username: login,
         token: token,
         source,
         isOwner: isOwner(login, source),
         authenticated: true,
-        expires: Date.now() + 86400000
-      }), { expirationTtl: 86400 });
+        expires: Date.now() + 30 * 24 * 3600 * 1000,
+      });
 
       return new Response(JSON.stringify({
         success: true,
@@ -32,7 +34,10 @@ export async function onRequestPost(context) {
         source,
         isOwner: isOwner(login, source),
       }), {
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+          'Content-Type': 'application/json',
+          'Set-Cookie': sessionSetCookie(sid),
+        }
       });
     } else {
       return new Response(JSON.stringify({ success: false, error: 'Invalid token' }), {
