@@ -943,6 +943,18 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
           this.isOwner = !!res.data.isOwner
         } else {
           this.isOwner = false
+
+          // 治本：后端说未登录而本地仍记 isAuth=true 时，清掉假登录态，避免状态分裂
+          if (localStorage.getItem('isAuth') === 'true') {
+            localStorage.removeItem('isAuth')
+            localStorage.removeItem('user')
+            localStorage.removeItem('gh_token')
+            localStorage.removeItem('gh_user')
+            localStorage.removeItem('auth_source')
+            this.isAuthenticated = false
+            this.username = ''
+            this.authForm = { username: '', token: '' }
+          }
         }
       } catch (e) {
         this.isOwner = false
