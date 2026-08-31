@@ -5,11 +5,15 @@ const OWNER_USERS = {
   gitcode: new Set(['huangjinzhou1']),
 };
 
+// 任何 source 下，只要 username 在任一 owner 列表里即视为 owner。
+// 原因：早期登录可能未写入 source 字段 / source 不规范，按 source 严格分流会漏判。
 export function isOwner(username, source) {
   if (!username) return false;
   const u = String(username).toLowerCase();
-  const list = OWNER_USERS[source || 'github'] || OWNER_USERS.github;
-  return list.has(u);
+  for (const list of Object.values(OWNER_USERS)) {
+    if (list.has(u)) return true;
+  }
+  return false;
 }
 
 export function getOwnerList(source) {
