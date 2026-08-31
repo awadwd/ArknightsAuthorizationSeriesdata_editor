@@ -16,6 +16,9 @@
         <a href="#" :class="{ active: view === 'review' }" @click.prevent="setView('review')" v-if="isAuthenticated">
           反馈审核
         </a>
+        <a href="#" :class="{ active: view === 'config' }" @click.prevent="setView('config')" v-if="isOwner">
+          配置管理
+        </a>
         <a href="#" :class="{ active: view === 'about' }" @click.prevent="setView('about')">
           {{ t('nav.about') }}
         </a>
@@ -55,6 +58,9 @@
         v-if="view === 'review'" 
         :username="username || 'admin'"
       />
+      
+      <!-- Config View -->
+      <AdminConfig v-if="view === 'config'" />
       
       <!-- About View -->
       <div v-if="view === 'about'" class="section">
@@ -636,6 +642,8 @@
 import axios from 'axios'
 import { useI18n, t as translate, tm } from './i18n'
 import AdminReview from './components/AdminReview.vue'
+import AdminConfig from './components/AdminConfig.vue'
+import { getAdminConfig } from './api/config'
 
 // 使用相对路径（Cloudflare Pages Functions 同域）
 // 开发环境代理到 localhost:3000，生产环境直接使用相对路径
@@ -647,7 +655,8 @@ export default {
   name: 'App',
   
   components: {
-    AdminReview
+    AdminReview,
+    AdminConfig,
   },
 
   setup() {
@@ -665,6 +674,7 @@ export default {
 
       // Auth
       isAuthenticated: false,
+      isOwner: false,
       username: '',
       authForm: { username: '', token: '' },
       authError: '',
@@ -916,6 +926,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       localStorage.removeItem('gh_token')
       localStorage.removeItem('gh_user')
       this.isAuthenticated = false
+      this.isOwner = false
       this.username = ''
       this.authForm = { username: '', token: '' }
       this.isRepoReady = false
@@ -923,6 +934,41 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       this.prUrl = ''
       this.jsonInput = ''
       this.commitMessage = ''
+    },
+
+    async checkOwnerStatus() {
+      try {
+        const res = await axios.get('/api/auth/status')
+        if (res.data && res.data.isAuthenticated) {
+          this.isOwner = !!res.data.isOwner
+        } else {
+          this.isOwner = false
+        }
+      } catch (e) {
+        this.isOwner = false
+      }
+    },
+
+    async loadConfigFromKV() {
+      try {
+        const data = await getAdminConfig()
+        const cfg = data && data.config
+        if (cfg) this.applyConfig(cfg)
+      } catch (e) {
+        // 静默失败：data 中硬编码兜底保留生效
+        console.warn('load config failed, fallback to hardcoded:', e && e.message)
+      }
+    },
+
+    applyConfig(cfg) {
+      if (!cfg) return
+      if (cfg.repoConfigs) {
+        if (cfg.repoConfigs.github)  this.repoConfigs.github  = { ...this.repoConfigs.github,  ...cfg.repoConfigs.github }
+        if (cfg.repoConfigs.gitcode) this.repoConfigs.gitcode = { ...this.repoConfigs.gitcode, ...cfg.repoConfigs.gitcode }
+      }
+      if (Array.isArray(cfg.editorFiles) && cfg.editorFiles.length > 0) {
+        this.files = cfg.editorFiles.map(v => ({ value: v, original: '' }))
+      }
     },
 
     async cloneOrPull() {
@@ -1207,6 +1253,10 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
       this.authForm.username = localStorage.getItem('gh_user') || savedUser
       this.authForm.token = localStorage.getItem('gh_token') || ''
     }
+
+    // 后台拉 owner 状态 + KV 配置（失败不影响硬编码兜底）
+    this.checkOwnerStatus()
+    this.loadConfigFromKV()
 
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.lang-dropdown')) {
