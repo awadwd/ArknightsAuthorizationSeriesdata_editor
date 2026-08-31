@@ -286,9 +286,14 @@
     "references": [],
     "description": "",
     "contact": "",
-    "status": "pending",
+    "status": "rejected",
     "createTime": "2026-08-08T06:06:35.502Z",
     "privacyAgreed": true,
-    "id": 1786169195502
+    "id": 1786169195502,
+    "reviewInfo": {
+      "reviewer": "admin",
+      "reviewTime": "2026-08-31T13:53:29.405Z",
+      "reason": "不符合收录原则"
+    }
   }
 ]
