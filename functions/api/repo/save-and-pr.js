@@ -1,4 +1,5 @@
 // Cloudflare Pages Function - Save and Create PR (GitHub & GitCode)
+import { getAppConfig } from '../_lib/appConfig.js';
 
 // 正确的 UTF-8 到 base64 编码（Cloudflare Workers 兼容）
 function utf8ToBase64(str) {
@@ -10,18 +11,10 @@ function utf8ToBase64(str) {
   return btoa(binary);
 }
 
-const REPO_CONFIG = {
-  github: {
-    owner: 'awadwd',
-    repo: 'ArknightsAuthorization_Series-mirror',
-    branch: 'dev',
-  },
-  gitcode: {
-    owner: 'huangjinzhou1',
-    repo: 'ArknightsAuthorization_Series',
-    branch: 'dev',
-  }
-};
+// GitCode (GitLab) project ID 双重编码：fetch 解码一次后剩 %2F
+function gitcodeProjectId(owner, repo) {
+  return `${owner}%252F${repo}`;
+}
 
 // GitCode (GitLab OAuth) 用 Authorization: Bearer (和 GitHub 一样)
 // PRIVATE-TOKEN 只接受 PAT，不接受 OAuth access_token
@@ -65,7 +58,13 @@ export async function onRequestPost(context) {
   }
 
   const source = auth.source || 'github';
-  const config = REPO_CONFIG[source] || REPO_CONFIG.github;
+  const cfg = await getAppConfig(env);
+  const repoConfigs = (cfg && cfg.repoConfigs) || {};
+  const config = repoConfigs[source] || repoConfigs.github;
+  const prCfg = (cfg && cfg.pr) || {};
+  const srcBranch = (config && config.branch) || 'dev';
+  const baseBranch = prCfg.defaultBaseBranch || srcBranch;
+
   const token = auth.token;
   const apiBase = source === 'gitcode' ? 'https://gitcode.com/api/v5' : null;
 
@@ -80,7 +79,7 @@ export async function onRequestPost(context) {
 
       // 1. 获取文件 last_commit_id
       const fileRes = await fetch(
-        `${apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}?ref=${config.branch}`,
+        `${apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}?ref=${srcBranch}`,
         { headers: gitcodeHeaders(token) }
       );
 
@@ -92,7 +91,7 @@ export async function onRequestPost(context) {
 
       // 2. 创建新分支
       const branchRes = await fetch(
-        `${apiBase}/projects/${projectId}/repository/branches?branch_name=${encodeURIComponent(branchName)}&ref=${encodeURIComponent(config.branch)}`,
+        `${apiBase}/projects/${projectId}/repository/branches?branch_name=${encodeURIComponent(branchName)}&ref=${encodeURIComponent(srcBranch)}`,
         {
           method: 'POST',
           headers: gitcodeHeaders(token),
@@ -141,9 +140,11 @@ export async function onRequestPost(context) {
           headers: gitcodeHeaders(token),
           body: JSON.stringify({
             source_branch: branchName,
-            target_branch: config.branch,
+            target_branch: baseBranch,
             title: commitMessage,
-            description: `自动创建的合并请求\n\n修改文件: ${filename}`,
+            description: `自动创建的合并请求
+
+修改文件: ${filename}`,
           }),
         }
       );
@@ -164,9 +165,11 @@ export async function onRequestPost(context) {
     } else {
       // ============ GitHub ============
       const { owner, repo, branch } = config;
+      const srcBranch2 = branch || srcBranch;
+      const baseBranch2 = prCfg.defaultBaseBranch || srcBranch2;
 
       // 1. Get file SHA
-      const fileRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}?ref=${branch}`, {
+      const fileRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}?ref=${srcBranch2}`, {
         headers: githubHeaders(token)
       });
 
@@ -183,7 +186,7 @@ export async function onRequestPost(context) {
       // 2. Create new branch
       const branchName = `update/${filename.replace('.json', '')}-${Date.now()}`;
 
-      const refRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+      const refRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${srcBranch2}`, {
         headers: githubHeaders(token)
       });
       const refData = await refRes.json();
@@ -222,8 +225,10 @@ export async function onRequestPost(context) {
         body: JSON.stringify({
           title: commitMessage,
           head: branchName,
-          base: branch,
-          body: `自动创建的 PR\n\n修改文件: ${filename}`,
+          base: baseBranch2,
+          body: `自动创建的 PR
+
+修改文件: ${filename}`,
         }),
       });
 

@@ -1,13 +1,6 @@
 // Cloudflare Pages Function - Get File Content (GitCode bypass WAF)
 // Route: /api/repo/file?filename=xxx&source=github|gitcode
-
-const REPO_CONFIG = {
-  github: {
-    owner: 'awadwd',
-    repo: 'ArknightsAuthorization_Series-mirror',
-    branch: 'dev',
-  },
-};
+import { getAppConfig } from '../_lib/appConfig.js';
 
 async function getAuth(env) {
   try {
@@ -56,14 +49,17 @@ export async function onRequest(context) {
     });
   }
 
+  const cfg = await getAppConfig(env);
+  const repoConfigs = (cfg && cfg.repoConfigs) || {};
+  const gh = repoConfigs.github || { owner: 'awadwd', repo: 'ArknightsAuthorization_Series-mirror', branch: 'dev' };
+  const gc = repoConfigs.gitcode || { owner: 'huangjinzhou1', repo: 'ArknightsAuthorization_Series', branch: 'dev' };
+
   try {
     let content;
 
     if (source === 'gitcode') {
       // GitCode: 用 raw 文件 URL（不经过 API，绕过 WAF）
-      // 参考：https://gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/raw/dev/Box_Id.json
-      const config = { owner: 'huangjinzhou1', repo: 'ArknightsAuthorization_Series', branch: 'dev' };
-      const rawUrl = `https://gitcode.com/${config.owner}/${config.repo}/raw/${config.branch}/${encodeURIComponent(filename)}`;
+      const rawUrl = `https://gitcode.com/${gc.owner}/${gc.repo}/raw/${gc.branch}/${encodeURIComponent(filename)}`;
 
       const res = await fetch(rawUrl, {
         headers: {
@@ -94,8 +90,7 @@ export async function onRequest(context) {
 
     } else {
       // GitHub: raw.githubusercontent.com
-      const config = REPO_CONFIG.github;
-      const rawUrl = `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}/${filename}`;
+      const rawUrl = `https://raw.githubusercontent.com/${gh.owner}/${gh.repo}/${gh.branch}/${filename}`;
 
       const fetchOptions = {
         headers: {

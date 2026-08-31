@@ -1,16 +1,5 @@
 // Cloudflare Pages Function - Clone/Check Repo
-const REPO_CONFIG = {
-  github: {
-    owner: 'awadwd',
-    repo: 'ArknightsAuthorization_Series-mirror',
-    branch: 'dev',
-  },
-  gitcode: {
-    owner: 'huangjinzhou1',
-    repo: 'ArknightsAuthorization_Series',
-    branch: 'dev',
-  }
-};
+import { getAppConfig } from '../_lib/appConfig.js';
 
 async function getAuth(env) {
   const authData = await env.AUTH_STORE?.get('current_auth');
@@ -38,7 +27,10 @@ export async function onRequestPost(context) {
   let body = {};
   try { body = await request.json(); } catch {}
   const source = body.source || auth.source || 'github';
-  const config = REPO_CONFIG[source] || REPO_CONFIG.github;
+
+  const cfg = await getAppConfig(env);
+  const repoConfigs = (cfg && cfg.repoConfigs) || {};
+  const config = repoConfigs[source] || repoConfigs.github;
 
   try {
     if (source === 'gitcode') {
