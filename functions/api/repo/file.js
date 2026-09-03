@@ -1,7 +1,7 @@
 // Cloudflare Pages Function - Get File Content (GitCode bypass WAF)
 // Route: /api/repo/file?filename=xxx&source=github|gitcode
 import { getAppConfig } from '../_lib/appConfig.js';
-import { getAuthByRequest } from '../_lib/session.js';
+import { verifyRequest } from '../_lib/auth.js';
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -11,13 +11,13 @@ export async function onRequest(context) {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       }
     });
   }
 
-  const auth = await getAuthByRequest(request, env);
-  if (!auth || !auth.authenticated) {
+  const auth = await verifyRequest(request);
+  if (!auth) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
@@ -44,7 +44,6 @@ export async function onRequest(context) {
     let content;
 
     if (source === 'gitcode') {
-      // GitCode: 用 raw 文件 URL（不经过 API，绕过 WAF）
       const rawUrl = `https://gitcode.com/${gc.owner}/${gc.repo}/raw/${gc.branch}/${encodeURIComponent(filename)}`;
 
       const res = await fetch(rawUrl, {
@@ -75,19 +74,15 @@ export async function onRequest(context) {
       content = await res.text();
 
     } else {
-      // GitHub: raw.githubusercontent.com
       const rawUrl = `https://raw.githubusercontent.com/${gh.owner}/${gh.repo}/${gh.branch}/${filename}`;
 
       const fetchOptions = {
         headers: {
           'User-Agent': 'Arknights-Tool',
           'Cache-Control': 'no-cache',
+          'Authorization': `Bearer ${auth.token}`,
         },
       };
-
-      if (auth.token) {
-        fetchOptions.headers['Authorization'] = `Bearer ${auth.token}`;
-      }
 
       const res = await fetch(rawUrl + `?t=${Date.now()}`, fetchOptions);
 
