@@ -1,12 +1,12 @@
 // Cloudflare Pages Function - Clone/Check Repo
 import { getAppConfig } from '../_lib/appConfig.js';
-import { getAuthByRequest } from '../_lib/session.js';
+import { verifyRequest } from '../_lib/auth.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  const auth = await getAuthByRequest(request, env);
-  if (!auth || !auth.authenticated) {
+  const auth = await verifyRequest(request);
+  if (!auth) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' }
@@ -24,8 +24,6 @@ export async function onRequestPost(context) {
 
   try {
     if (source === 'gitcode') {
-      // GitCode = GitLab 系：用 API v4 验证仓库是否可访问
-      // 双重编码 project ID，fetch() 解码一次后剩 %2F
       const projectId = `${config.owner}%252F${config.repo}`;
       const apiUrl = `https://gitcode.com/api/v4/projects/${projectId}`;
 
@@ -59,7 +57,6 @@ export async function onRequestPost(context) {
         });
       }
     } else {
-      // GitHub
       const res = await fetch(`https://api.github.com/repos/${config.owner}/${config.repo}`, {
         headers: {
           'Authorization': `Bearer ${auth.token}`,
