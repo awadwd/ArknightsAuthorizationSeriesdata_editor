@@ -130,6 +130,7 @@
 </template>
 
 <script>
+import axios from 'axios'
 import { getAdminConfig, setAdminConfig } from '../api/config'
 
 export default {
@@ -148,13 +149,10 @@ export default {
     }
   },
   async mounted() {
-    // 检查 owner 权限
+    // 检查 owner 权限（用 axios，自动继承 App.vue 中的 Authorization 拦截器）
     try {
-      const res = await fetch('/api/auth/status')
-      if (res.ok) {
-        const j = await res.json()
-        this.isOwnerAuth = !!(j && j.isAuthenticated && j.isOwner)
-      }
+      const { data: j } = await axios.get('/api/auth/status')
+      this.isOwnerAuth = !!(j && j.isAuthenticated && j.isOwner)
     } catch (e) { /* ignore */ }
     this.authReady = true
     if (this.isOwnerAuth) await this.load()
