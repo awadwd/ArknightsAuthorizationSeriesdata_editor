@@ -1,4 +1,5 @@
 // Cloudflare Pages Function - OAuth Callback (GitHub or GitCode)
+// fix: Set-Cookie must be array-of-arrays form in CF Workers
 import { isOwner } from '../_lib/owner.js';
 import { getAppConfig } from '../_lib/appConfig.js';
 import { generateSid, sessionSetCookie, saveAuthBySid } from '../_lib/session.js';
@@ -88,6 +89,7 @@ export async function onRequest(context) {
           client_id: clientId,
           client_secret: clientSecret,
           code,
+          grant_type: 'authorization_code',
           redirect_uri: redirectUri,
         }),
       });
@@ -110,7 +112,6 @@ export async function onRequest(context) {
     const username = userData.login || userData.username || 'unknown';
     const sourceLabel = source === 'gitcode' ? 'GitCode' : 'GitHub';
 
-    // Generate new session id, write KV under auth:${sid}, set httpOnly cookie
     const sid = generateSid();
     await saveAuthBySid(env, sid, {
       username,
@@ -164,10 +165,10 @@ export async function onRequest(context) {
       </body>
       </html>
     `, {
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Set-Cookie': sessionSetCookie(sid),
-      }
+      headers: [
+        ['Content-Type', 'text/html; charset=utf-8'],
+        ['Set-Cookie', sessionSetCookie(sid)],
+      ],
     });
   } catch (error) {
     return new Response(`<h1>授权失败</h1><p>${error.message}</p>`, {
