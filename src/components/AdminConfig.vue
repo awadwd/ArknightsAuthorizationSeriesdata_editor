@@ -116,6 +116,71 @@
           </div>
         </div>
 
+        <!-- 自动同步 -->
+        <div class="panel">
+          <h3 class="panel-title">自动同步（知晓云 → kc-data）</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">启用自动同步</label>
+              <label class="switch">
+                <input type="checkbox" v-model="config.autoSync.enabled" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Cron 计划（每小时由 GitHub Actions 触发）</label>
+              <input class="form-input" v-model="config.autoSync.schedule" />
+              <span class="form-hint">默认 <code>0 * * * *</code>（每小时整点）。需仓库配置 <code>ADMIN_TOKEN</code> secret 与 GitHub Actions。</span>
+            </div>
+          </div>
+          <div class="sync-status" v-if="syncStatus">
+            <div>最近同步：<strong>{{ formatTime(syncStatus.lastRunAt) }}</strong></div>
+            <div v-if="syncStatus.triggeredBy">触发者：{{ syncStatus.triggeredBy }}</div>
+            <div v-if="syncStatus.prUrl">PR：<a :href="syncStatus.prUrl" target="_blank" rel="noopener">{{ syncStatus.prUrl }}</a></div>
+            <div v-if="syncStatus.pushError" class="text-danger">推送错误：{{ syncStatus.pushError }}</div>
+          </div>
+          <div class="save-bar" style="margin-top:12px;">
+            <button class="btn btn-secondary" @click="manualSync" :disabled="syncing" type="button">
+              {{ syncing ? '同步中...' : '立即同步一次' }}
+            </button>
+            <span v-if="syncMsg" class="badge badge-connected">{{ syncMsg }}</span>
+            <span v-if="syncError" class="save-error">{{ syncError }}</span>
+          </div>
+          <div class="alert alert-info" style="margin-top:12px;">
+            自动同步需要：① 仓库 Secrets 配置 <code>ADMIN_TOKEN</code>（你的 GitHub PAT）；② 已启用 <code>.github/workflows/sync-knowcloud.yml</code>。
+          </div>
+        </div>
+
+        <!-- 数据表编辑 -->
+        <div class="panel">
+          <h3 class="panel-title">业务数据表（kc-data）</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">选择数据表</label>
+              <select class="form-input" v-model="selectedTable" @change="loadTable">
+                <option value="">— 请选择 —</option>
+                <option v-for="t in tablesList" :key="t" :value="t">{{ t }}（{{ tableCounts[t] || 0 }} 条）</option>
+              </select>
+            </div>
+          </div>
+          <div v-if="selectedTable" class="form-group">
+            <label class="form-label">表数据（JSON 数组，保存即提 PR）</label>
+            <textarea
+              class="form-input"
+              v-model="tableText"
+              rows="12"
+              style="min-height:240px;font-family:monospace;font-size:12px;"
+            ></textarea>
+            <div class="save-bar" style="margin-top:12px;">
+              <button class="btn btn-primary" @click="saveTable" :disabled="tableSaving" type="button">
+                {{ tableSaving ? '保存中...' : '保存该表' }}
+              </button>
+              <span v-if="tableMsg" class="badge badge-connected">{{ tableMsg }}</span>
+              <span v-if="tableError" class="save-error">{{ tableError }}</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Save -->
         <div class="save-bar">
           <button class="btn btn-primary btn-lg" @click="save" :disabled="saving" type="button">
@@ -150,10 +215,22 @@ export default {
       saveError: '',
       config: null,
       editorFilesText: '',
+      // 同步
+      syncStatus: null,
+      syncing: false,
+      syncMsg: '',
+      syncError: '',
+      // 数据表
+      tablesList: [],
+      tableCounts: {},
+      selectedTable: '',
+      tableText: '',
+      tableSaving: false,
+      tableMsg: '',
+      tableError: '',
     }
   },
   async mounted() {
-    // 检查 owner 权限（用 axios，自动继承 App.vue 中的 Authorization 拦截器）
     const tok = localStorage.getItem('gh_token') || ''
     try {
       const { data: j } = await axios.get('/api/auth/status')
@@ -163,7 +240,11 @@ export default {
       this.debugInfo = 'token=' + tok.slice(0, 8) + '... len=' + tok.length + ' | ERROR=' + (e && e.message)
     }
     this.authReady = true
-    if (this.isOwnerAuth) await this.load()
+    if (this.isOwnerAuth) {
+      await this.load()
+      await this.loadSyncStatus()
+      await this.loadTables()
+    }
   },
   watch: {
     editorFilesText(v) {
@@ -175,7 +256,6 @@ export default {
   },
   methods: {
     normalize(raw) {
-      // 兜底：保证所有字段存在
       return {
         repoConfigs: {
           github: { owner: '', repo: '', branch: 'dev', ...(raw.repoConfigs && raw.repoConfigs.github || {}) },
@@ -185,7 +265,20 @@ export default {
         oauth: { gitcodeClientId: '', ...(raw.oauth || {}) },
         pr: { defaultBaseBranch: 'dev', ...(raw.pr || {}) },
         feedback: { storagePath: 'feedback.json', branch: 'master', ...(raw.feedback || {}) },
+        autoSync: {
+          enabled: false,
+          schedule: '0 * * * *',
+          source: 'knowcloud',
+          tables: ['Version', 'choearth_notice', 'more_notice', 'questionnaire', 'SearchWord_Version', 'Guess_Version', 'AiToolsConfig'],
+          lastRunAt: null,
+          lastResult: null,
+          ...(raw.autoSync || {}),
+        },
       }
+    },
+    formatTime(iso) {
+      if (!iso) return '从未'
+      try { return new Date(iso).toLocaleString() } catch (e) { return iso }
     },
     async load() {
       this.loading = true
@@ -204,6 +297,82 @@ export default {
         this.loadError = '获取配置失败：' + ((e.response && e.response.data && e.response.data.error) || e.message)
       } finally {
         this.loading = false
+      }
+    },
+    async loadSyncStatus() {
+      try {
+        const { data } = await axios.get('/api/admin/sync-status')
+        if (data && data.success) this.syncStatus = data.status
+      } catch (e) {}
+    },
+    async manualSync() {
+      this.syncing = true
+      this.syncMsg = ''
+      this.syncError = ''
+      try {
+        const { data } = await axios.post('/api/admin/sync')
+        if (data && data.success) {
+          this.syncMsg = '同步完成'
+          this.syncStatus = data.status
+          setTimeout(() => { this.syncMsg = '' }, 3000)
+        } else {
+          this.syncError = (data && data.error) || '同步失败'
+        }
+      } catch (e) {
+        this.syncError = (e.response && e.response.data && e.response.data.error) || e.message
+      } finally {
+        this.syncing = false
+      }
+    },
+    async loadTables() {
+      try {
+        const { data } = await axios.get('/api/admin/tables')
+        if (data && data.success) {
+          this.tablesList = data.tables || []
+          this.tableCounts = {}
+          const d = data.data || {}
+          for (const k of Object.keys(d)) this.tableCounts[k] = Array.isArray(d[k]) ? d[k].length : 0
+        }
+      } catch (e) {}
+    },
+    async loadTable() {
+      if (!this.selectedTable) { this.tableText = ''; return }
+      try {
+        const { data } = await axios.get('/api/admin/tables')
+        if (data && data.success) {
+          const rows = (data.data && data.data[this.selectedTable]) || []
+          this.tableText = JSON.stringify(rows, null, 2)
+        }
+      } catch (e) {
+        this.tableError = e.message
+      }
+    },
+    async saveTable() {
+      if (!this.selectedTable) return
+      this.tableSaving = true
+      this.tableMsg = ''
+      this.tableError = ''
+      let rows
+      try {
+        rows = JSON.parse(this.tableText)
+        if (!Array.isArray(rows)) throw new Error('必须是 JSON 数组')
+      } catch (e) {
+        this.tableError = 'JSON 解析失败：' + e.message
+        this.tableSaving = false
+        return
+      }
+      try {
+        const { data } = await axios.post('/api/admin/tables', { table: this.selectedTable, rows })
+        if (data && data.success) {
+          this.tableMsg = '已提 PR'
+          setTimeout(() => { this.tableMsg = '' }, 3000)
+        } else {
+          this.tableError = (data && data.error) || '保存失败'
+        }
+      } catch (e) {
+        this.tableError = (e.response && e.response.data && e.response.data.error) || e.message
+      } finally {
+        this.tableSaving = false
       }
     },
     reload() {
@@ -319,6 +488,15 @@ export default {
   margin-top: 24px;
 }
 
+.sync-status {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-muted, #555);
+  line-height: 1.6;
+}
+
+.text-danger { color: #991b1b; }
+
 .badge {
   display: inline-block;
   padding: 4px 12px;
@@ -336,4 +514,33 @@ export default {
   color: #991b1b;
   font-size: 13px;
 }
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: #ccc;
+  border-radius: 24px;
+  transition: 0.2s;
+}
+.slider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.2s;
+}
+.switch input:checked + .slider { background: #409eff; }
+.switch input:checked + .slider::before { transform: translateX(20px); }
 </style>

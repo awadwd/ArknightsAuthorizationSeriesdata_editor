@@ -30,6 +30,15 @@ export const DEFAULT_CONFIG = {
     storagePath: 'feedback.json',
     branch: 'master',
   },
+  // 自动同步：每小时从知晓云拉数据表 -> 重写 kc-data.js
+  autoSync: {
+    enabled: false,
+    schedule: '0 * * * *',
+    source: 'knowcloud',
+    tables: ['Version', 'choearth_notice', 'more_notice', 'questionnaire', 'SearchWord_Version', 'Guess_Version', 'AiToolsConfig'],
+    lastRunAt: null,
+    lastResult: null,
+  },
 };
 
 export async function getAppConfig(env) {
