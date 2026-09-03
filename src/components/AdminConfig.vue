@@ -1,5 +1,8 @@
 <template>
   <div class="admin-config-container">
+    <div v-if="debugInfo" style="background:#222;color:#0f0;font-family:monospace;padding:8px 12px;border-radius:4px;font-size:12px;margin-bottom:12px;word-break:break-all;">
+      [DEBUG] {{ debugInfo }}
+    </div>
     <div class="section-header">
       <span class="section-eyebrow">管理员</span>
       <h1 class="section-title">配置管理</h1>
@@ -139,6 +142,7 @@ export default {
     return {
       authReady: false,
       isOwnerAuth: false,
+      debugInfo: '',
       loading: false,
       loadError: '',
       saving: false,
@@ -150,10 +154,14 @@ export default {
   },
   async mounted() {
     // 检查 owner 权限（用 axios，自动继承 App.vue 中的 Authorization 拦截器）
+    const tok = localStorage.getItem('gh_token') || ''
     try {
       const { data: j } = await axios.get('/api/auth/status')
       this.isOwnerAuth = !!(j && j.isAuthenticated && j.isOwner)
-    } catch (e) { /* ignore */ }
+      this.debugInfo = 'token=' + tok.slice(0, 8) + '... len=' + tok.length + ' | status=' + JSON.stringify(j)
+    } catch (e) {
+      this.debugInfo = 'token=' + tok.slice(0, 8) + '... len=' + tok.length + ' | ERROR=' + (e && e.message)
+    }
     this.authReady = true
     if (this.isOwnerAuth) await this.load()
   },
