@@ -1,18 +1,12 @@
 import axios from 'axios'
 
-const api = axios.create({
-  baseURL: import.meta.env.DEV ? 'http://localhost:3000' : '',
-  timeout: 30000,
-})
-
-// GET /api/admin/config -> { success, config }
+// 使用全局 axios，自动继承 App.vue 中设置的 baseURL 与 Authorization 拦截器
 export async function getAdminConfig() {
-  const { data } = await api.get('/api/admin/config')
+  const { data } = await axios.get('/api/admin/config')
   return data
 }
 
-// POST /api/admin/config { config } -> { success }
 export async function setAdminConfig(config) {
-  const { data } = await api.post('/api/admin/config', { config })
+  const { data } = await axios.post('/api/admin/config', { config })
   return data
 }
