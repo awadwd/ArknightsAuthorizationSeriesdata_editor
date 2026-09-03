@@ -1,5 +1,5 @@
 // Cloudflare Pages Function - Validate Token
-// fix: Set-Cookie must be array-of-arrays form in CF Workers, string-form is silently dropped
+// fix v2: Set-Cookie via new Headers() + append() (CF Workers canonical form)
 import { isOwner } from '../_lib/owner.js';
 import { generateSid, sessionSetCookie, saveAuthBySid } from '../_lib/session.js';
 
@@ -29,21 +29,16 @@ export async function onRequestPost(context) {
         expires: Date.now() + 30 * 24 * 3600 * 1000,
       });
 
-      // Verify KV write happened (AUTH_STORE binding sanity check)
       let kvOk = false;
       if (env.AUTH_STORE) {
         const verify = await env.AUTH_STORE.get(`auth:${sid}`);
         kvOk = !!verify;
       }
 
-      // Array-of-arrays form for Set-Cookie (CF Workers eats the object form)
-      const headers = [
-        ['Content-Type', 'application/json'],
-        ['Set-Cookie', sessionSetCookie(sid)],
-      ];
-      if (!kvOk) {
-        headers.push(['X-KV-Warning', 'AUTH_STORE missing or write failed']);
-      }
+      // Canonical CF Workers Set-Cookie form
+      const headers = new Headers();
+      headers.set('Content-Type', 'application/json');
+      headers.append('Set-Cookie', sessionSetCookie(sid));
 
       return new Response(JSON.stringify({
         success: true,
