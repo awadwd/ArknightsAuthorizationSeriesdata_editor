@@ -157,7 +157,7 @@ export default {
     const tok = localStorage.getItem('gh_token') || ''
     try {
       const { data: j } = await axios.get('/api/auth/status')
-      this.isOwnerAuth = !!(j && j.isAuthenticated && j.isOwner)
+      this.isOwnerAuth = !!(j && j.authenticated && j.isOwner)
       this.debugInfo = 'token=' + tok.slice(0, 8) + '... len=' + tok.length + ' | status=' + JSON.stringify(j)
     } catch (e) {
       this.debugInfo = 'token=' + tok.slice(0, 8) + '... len=' + tok.length + ' | ERROR=' + (e && e.message)
