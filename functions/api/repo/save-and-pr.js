@@ -1,6 +1,6 @@
 // Cloudflare Pages Function - Save and Create PR (GitHub & GitCode)
 import { getAppConfig } from '../_lib/appConfig.js';
-import { getAuthByRequest } from '../_lib/session.js';
+import { verifyRequest } from '../_lib/auth.js';
 
 // 正确的 UTF-8 到 base64 编码（Cloudflare Workers 兼容）
 function utf8ToBase64(str) {
@@ -17,8 +17,6 @@ function gitcodeProjectId(owner, repo) {
   return `${owner}%252F${repo}`;
 }
 
-// GitCode (GitLab OAuth) 用 Authorization: Bearer (和 GitHub 一样)
-// PRIVATE-TOKEN 只接受 PAT，不接受 OAuth access_token
 function gitcodeHeaders(token) {
   return {
     'Authorization': `Bearer ${token}`,
@@ -39,8 +37,8 @@ function githubHeaders(token) {
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  const auth = await getAuthByRequest(request, env);
-  if (!auth || !auth.authenticated) {
+  const auth = await verifyRequest(request);
+  if (!auth) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' }
@@ -63,11 +61,9 @@ export async function onRequestPost(context) {
     const { filename, content, commitMessage } = body;
 
     if (source === 'gitcode') {
-      // ============ GitCode (GitLab API) ============
       const projectId = gitcodeProjectId(config.owner, config.repo);
       const branchName = `update/${filename.replace('.json', '')}-${Date.now()}`;
 
-      // 1. 获取文件 last_commit_id
       const fileRes = await fetch(
         `${apiBase}/projects/${projectId}/repository/files/${encodeURIComponent(filename)}?ref=${srcBranch}`,
         { headers: gitcodeHeaders(token) }
@@ -79,7 +75,6 @@ export async function onRequestPost(context) {
         lastCommitId = fileData.last_commit_id || fileData.commit_id || null;
       }
 
-      // 2. 创建新分支
       const branchRes = await fetch(
         `${apiBase}/projects/${projectId}/repository/branches?branch_name=${encodeURIComponent(branchName)}&ref=${encodeURIComponent(srcBranch)}`,
         {
@@ -96,7 +91,6 @@ export async function onRequestPost(context) {
         });
       }
 
-      // 3. 更新文件（创建 commit）
       const updateBody = {
         branch: branchName,
         content: content,
@@ -122,7 +116,6 @@ export async function onRequestPost(context) {
         });
       }
 
-      // 4. 创建 Merge Request
       const mrRes = await fetch(
         `${apiBase}/projects/${projectId}/merge_requests`,
         {
@@ -153,12 +146,10 @@ export async function onRequestPost(context) {
       }
 
     } else {
-      // ============ GitHub ============
       const { owner, repo, branch } = config;
       const srcBranch2 = branch || srcBranch;
       const baseBranch2 = prCfg.defaultBaseBranch || srcBranch2;
 
-      // 1. Get file SHA
       const fileRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}?ref=${srcBranch2}`, {
         headers: githubHeaders(token)
       });
@@ -173,7 +164,6 @@ export async function onRequestPost(context) {
       const fileData = await fileRes.json();
       const sha = fileData.sha;
 
-      // 2. Create new branch
       const branchName = `update/${filename.replace('.json', '')}-${Date.now()}`;
 
       const refRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${srcBranch2}`, {
@@ -188,13 +178,12 @@ export async function onRequestPost(context) {
         body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha: baseSha }),
       });
 
-      // 3. Update file
       const updateRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}`, {
         method: 'PUT',
         headers: githubHeaders(token),
         body: JSON.stringify({
           message: commitMessage,
-          content: utf8ToBase64(content),  // 必须 base64 编码（支持 UTF-8）
+          content: utf8ToBase64(content),
           sha,
           branch: branchName,
         }),
@@ -208,7 +197,6 @@ export async function onRequestPost(context) {
         });
       }
 
-      // 4. Create PR
       const prRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
         method: 'POST',
         headers: githubHeaders(token),
