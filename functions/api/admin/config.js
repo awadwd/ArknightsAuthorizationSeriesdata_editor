@@ -1,13 +1,12 @@
 import { getAppConfig, saveAppConfig } from '../_lib/appConfig.js';
-import { isOwner } from '../_lib/owner.js';
-import { getAuthByRequest } from '../_lib/session.js';
+import { verifyRequest } from '../_lib/auth.js';
 
 function cors() {
   return {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 }
 
@@ -25,14 +24,13 @@ export async function onRequestGet(context) {
 
 // POST /api/admin/config — owner-only 写
 export async function onRequestPost(context) {
-  const auth = await getAuthByRequest(context.request, context.env);
+  const auth = await verifyRequest(context.request);
   if (!auth) {
     return new Response(JSON.stringify({ success: false, error: 'not authenticated' }), {
       status: 401, headers: cors(),
     });
   }
-  const ownerOk = isOwner(auth.username, auth.source);
-  if (!ownerOk) {
+  if (!auth.isOwner) {
     return new Response(JSON.stringify({
       success: false,
       error: 'forbidden: only repo owner can change config',
