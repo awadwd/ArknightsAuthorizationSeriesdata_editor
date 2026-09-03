@@ -651,6 +651,16 @@ const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:3000' : ''
 axios.defaults.baseURL = API_BASE_URL
 axios.defaults.timeout = 0
 
+// Attach Authorization header to every request (header-token auth; bypasses CF KV write limit)
+axios.interceptors.request.use((config) => {
+  const t = localStorage.getItem('gh_token')
+  if (t) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = 'Bearer ' + t
+  }
+  return config
+})
+
 export default {
   name: 'App',
   
@@ -854,6 +864,7 @@ git push origin update/${this.activeFile.replace('.json','')}-${Date.now()}
         if (res.data.success) {
           this.isAuthenticated = true
           this.username = res.data.user || this.authForm.username
+          this.isOwner = res.data.isOwner || false
           localStorage.setItem('isAuth', 'true')
           localStorage.setItem('user', this.username)
           localStorage.setItem('gh_token', this.authForm.token)
