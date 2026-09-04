@@ -53,12 +53,18 @@ jobs:
             exit 1
           fi
           echo "resolve args:$RESOLVE_ARGS"
-          echo "Token length: ${#ADMIN_TOKEN}"
+
+          # IPv6 egress probe (no auth) - proves connectivity before requiring token
+          echo "Probe (no auth, GET):"
+          PROBE=$(curl $RESOLVE_ARGS --connect-timeout 15 --max-time 30 -sS -o /tmp/probe.body -w "%{http_code}" "https://$HOST/api/admin/sync" 2>&1) || true
+          echo "  probe http_code=$PROBE"
+          echo "  probe body: $(head -c 300 /tmp/probe.body 2>/dev/null)"
+
           if [ "${#ADMIN_TOKEN}" -lt 10 ]; then
-            echo "::error::ADMIN_TOKEN secret appears unset or too short (length=${#ADMIN_TOKEN})"
+            echo "::error::ADMIN_TOKEN secret not set. Above probe proves IPv6 egress; configure the secret to actually sync."
             exit 1
           fi
-          echo "Connecting (expect 401 without valid token, 200 with)..."
+          echo "Token length: ${#ADMIN_TOKEN}"
           RESP=$(curl $RESOLVE_ARGS --retry 3 --retry-delay 10 --retry-connrefused \
             --connect-timeout 15 --max-time 120 \
             -sS -w "\n__HTTP_CODE__=%{http_code}" \
