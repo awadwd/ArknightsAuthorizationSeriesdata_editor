@@ -10,21 +10,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: DNS + reachability pre-check
+      - name: Resolve host (with DNS fallback)
+        id: resolve
         run: |
           set -euo pipefail
           HOST="arknightsauthorizationsseriesdata-editor.pages.dev"
-          echo "Resolving $HOST ..."
-          getent hosts "$HOST" || nslookup "$HOST" || true
-          curl -sS --connect-timeout 10 -o /dev/null -w "precheck http=%{http_code} time=%{time_total}\n" \
-            "https://$HOST/api/auth/status" || echo "precheck failed (continuing)"
+          if ! command -v dig >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
+          fi
+          IP=$(dig +short +time=5 +tries=2 "$HOST" @1.1.1.1 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ -z "$IP" ]; then
+            IP=$(dig +short +time=5 +tries=2 "$HOST" @8.8.8.8 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          fi
+          if [ -z "$IP" ]; then
+            echo "::error::Failed to resolve $HOST via 1.1.1.1 and 8.8.8.8"
+            exit 1
+          fi
+          echo "host=$HOST" >> $GITHUB_OUTPUT
+          echo "ip=$IP" >> $GITHUB_OUTPUT
+          echo "Resolved $HOST -> $IP"
       - name: Call sync API
         run: |
           set -euo pipefail
-          URL="https://arknightsauthorizationsseriesdata-editor.pages.dev/api/admin/sync"
-          echo "Posting to $URL"
+          HOST="${{ steps.resolve.outputs.host }}"
+          IP="${{ steps.resolve.outputs.ip }}"
+          URL="https://$HOST/api/admin/sync"
+          echo "Posting to $URL via $IP"
           echo "Token length: ${#ADMIN_TOKEN}"
-          RESP=$(curl --retry 3 --retry-delay 10 --retry-connrefused \
+          if [ "${#ADMIN_TOKEN}" -lt 10 ]; then
+            echo "::error::ADMIN_TOKEN secret appears unset or too short (length=${#ADMIN_TOKEN})"
+            exit 1
+          fi
+          RESP=$(curl --resolve "$HOST:443:$IP" --retry 3 --retry-delay 10 --retry-connrefused \
             --connect-timeout 15 --max-time 120 \
             -sS -w "\n__HTTP_CODE__=%{http_code}" \
             -X POST \
