@@ -15,24 +15,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Resolve via DoH (A + AAAA) and call sync API
+      - name: Resolve via DoH (multi-provider, A+AAAA) and call sync API
         run: |
           set -uo pipefail
           HOST="${{ github.event.inputs.pages_host }}"
           echo "Target host: $HOST"
-          # DoH for A (IPv4)
-          A_RESP=$(curl -sS --resolve 1.1.1.1:443:1.1.1.1 -H "accept: application/dns-json" "https://1.1.1.1/dns-query?name=$HOST&type=A" 2>/dev/null) || true
-          A_IPS=$(echo "$A_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(a['data'] for a in d.get('Answer',[]) if a.get('type')==1))" 2>/dev/null || true)
-          echo "A(IPv4): '$A_IPS' Status=$(echo "$A_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('Status'))" 2>/dev/null||true)"
-          # DoH for AAAA (IPv6)
-          AAAA_RESP=$(curl -sS --resolve 1.1.1.1:443:1.1.1.1 -H "accept: application/dns-json" "https://1.1.1.1/dns-query?name=$HOST&type=AAAA" 2>/dev/null) || true
-          AAAA_IPS=$(echo "$AAAA_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(a['data'] for a in d.get('Answer',[]) if a.get('type')==28))" 2>/dev/null || true)
-          echo "AAAA(IPv6): '$AAAA_IPS' Status=$(echo "$AAAA_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('Status'))" 2>/dev/null||true)"
+          A_IPS=""; AAAA_IPS=""
+          for PROV in "1.1.1.1|https://1.1.1.1/dns-query" "8.8.8.8|https://8.8.8.8/resolve"; do
+            IP="${PROV%%|*}"; URL="${PROV##*|}"
+            echo "--- DoH provider $IP ---"
+            R=$(curl -sS --resolve "$IP:443:$IP" -H "accept: application/dns-json" "$URL?name=$HOST&type=A" 2>/dev/null) || true
+            S=$(echo "$R" | python3 -c "import sys,json;print(json.load(sys.stdin).get('Status'))" 2>/dev/null||true)
+            echo "  A Status=$S"
+            if [ "$S" = "0" ]; then
+              A_IPS=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(a['data'] for a in d.get('Answer',[]) if a.get('type')==1))" 2>/dev/null || true)
+            fi
+            R=$(curl -sS --resolve "$IP:443:$IP" -H "accept: application/dns-json" "$URL?name=$HOST&type=AAAA" 2>/dev/null) || true
+            S=$(echo "$R" | python3 -c "import sys,json;print(json.load(sys.stdin).get('Status'))" 2>/dev/null||true)
+            echo "  AAAA Status=$S"
+            if [ "$S" = "0" ]; then
+              AAAA_IPS=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(a['data'] for a in d.get('Answer',[]) if a.get('type')==28))" 2>/dev/null || true)
+            fi
+            echo "  A(IPv4)='$A_IPS' AAAA(IPv6)='$AAAA_IPS'"
+            if [ -n "$A_IPS" ] || [ -n "$AAAA_IPS" ]; then
+              echo "  Got records from $IP, stop."
+              break
+            fi
+          done
           RESOLVE_ARGS=""
           for ip in $A_IPS; do RESOLVE_ARGS="$RESOLVE_ARGS --resolve $HOST:443:$ip"; done
           for ip in $AAAA_IPS; do RESOLVE_ARGS="$RESOLVE_ARGS --resolve $HOST:443:[$ip]"; done
           if [ -z "$RESOLVE_ARGS" ]; then
-            echo "::error::No A/AAAA records for $HOST"
+            echo "::error::No A/AAAA records for $HOST from any DoH provider"
             exit 1
           fi
           echo "resolve args:$RESOLVE_ARGS"
