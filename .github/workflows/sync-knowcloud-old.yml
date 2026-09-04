@@ -1,0 +1,84 @@
+name: Sync KnowCloud Data
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      pages_host:
+        description: 'Pages dev hostname, no scheme (e.g. xxx.pages.dev)'
+        required: false
+        default: 'arknightsauthorizationsseriesdata-editor.pages.dev'
+      pages_ip:
+        description: 'Optional hardcoded IP (IPv4 or IPv6) to skip DNS. Fill from browser Network remote address.'
+        required: false
+        default: '2606:4700:310c::ac42:2cd7'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Resolve and call sync API
+        run: |
+          set -uo pipefail
+          HOST="${{ github.event.inputs.pages_host }}"
+          FIXED_IP="${{ github.event.inputs.pages_ip }}"
+          echo "Target host: $HOST"
+          RESOLVE_ARGS=""
+          if [ -n "$FIXED_IP" ]; then
+            if echo "$FIXED_IP" | grep -q ':'; then
+              RESOLVE_ARGS="--resolve $HOST:443:[$FIXED_IP]"
+            else
+              RESOLVE_ARGS="--resolve $HOST:443:$FIXED_IP"
+            fi
+            echo "Using hardcoded IP: $FIXED_IP"
+          else
+            echo "No hardcoded IP; trying DoH..."
+            for PROV in "1.1.1.1|https://1.1.1.1/dns-query" "8.8.8.8|https://8.8.8.8/resolve"; do
+              IP="${PROV%%|*}"; URL="${PROV##*|}"
+              R=$(curl -sS --resolve "$IP:443:$IP" -H "accept: application/dns-json" "$URL?name=$HOST&type=A" 2>/dev/null) || true
+              S=$(echo "$R" | python3 -c "import sys,json;print(json.load(sys.stdin).get('Status'))" 2>/dev/null||true)
+              if [ "$S" = "0" ]; then A_IPS=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(a['data'] for a in d.get('Answer',[]) if a.get('type')==1))" 2>/dev/null || true); fi
+              R=$(curl -sS --resolve "$IP:443:$IP" -H "accept: application/dns-json" "$URL?name=$HOST&type=AAAA" 2>/dev/null) || true
+              S=$(echo "$R" | python3 -c "import sys,json;print(json.load(sys.stdin).get('Status'))" 2>/dev/null||true)
+              if [ "$S" = "0" ]; then AAAA_IPS=$(echo "$R" | python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(a['data'] for a in d.get('Answer',[]) if a.get('type')==28))" 2>/dev/null || true); fi
+              if [ -n "$A_IPS" ] || [ -n "$AAAA_IPS" ]; then break; fi
+            done
+            for ip in $A_IPS; do RESOLVE_ARGS="$RESOLVE_ARGS --resolve $HOST:443:$ip"; done
+            for ip in $AAAA_IPS; do RESOLVE_ARGS="$RESOLVE_ARGS --resolve $HOST:443:[$ip]"; done
+          fi
+          if [ -z "$RESOLVE_ARGS" ]; then
+            echo "::error::No IP available (DNS failed and no hardcoded IP)"
+            exit 1
+          fi
+          echo "resolve args:$RESOLVE_ARGS"
+
+          # IPv6 egress probe (no auth) - proves connectivity before requiring token
+          echo "Probe (no auth, GET):"
+          PROBE=$(curl $RESOLVE_ARGS --connect-timeout 15 --max-time 30 -sS -o /tmp/probe.body -w "%{http_code}" "https://$HOST/api/admin/sync" 2>&1) || true
+          echo "  probe http_code=$PROBE"
+          echo "  probe body: $(head -c 300 /tmp/probe.body 2>/dev/null)"
+
+          if [ "${#ADMIN_TOKEN}" -lt 10 ]; then
+            echo "::error::ADMIN_TOKEN secret not set. Above probe proves IPv6 egress; configure the secret to actually sync."
+            exit 1
+          fi
+          echo "Token length: ${#ADMIN_TOKEN}"
+          RESP=$(curl $RESOLVE_ARGS --retry 3 --retry-delay 10 --retry-connrefused \
+            --connect-timeout 15 --max-time 120 \
+            -sS -w "\n__HTTP_CODE__=%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://$HOST/api/admin/sync")
+          BODY=$(echo "$RESP" | sed '$d')
+          HTTP_CODE=$(echo "$RESP" | tail -n1 | sed 's/.*=//')
+          echo "HTTP_CODE=$HTTP_CODE"
+          echo "BODY=$BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::sync failed http=$HTTP_CODE"
+            exit 1
+          fi
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
