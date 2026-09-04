@@ -13,17 +13,26 @@ jobs:
       - name: Resolve host (with DNS fallback)
         id: resolve
         run: |
-          set -euo pipefail
+          set -uo pipefail
           HOST="arknightsauthorizationsseriesdata-editor.pages.dev"
-          if ! command -v dig >/dev/null; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
-          fi
-          IP=$(dig +short +time=5 +tries=2 "$HOST" @1.1.1.1 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          echo "Trying system resolver (getent)..."
+          IP=$(getent hosts "$HOST" 2>/dev/null | awk '{print $1}' | head -1) || true
+          echo "getent -> '$IP'"
           if [ -z "$IP" ]; then
-            IP=$(dig +short +time=5 +tries=2 "$HOST" @8.8.8.8 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            if ! command -v dig >/dev/null 2>&1; then
+              sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils 2>/dev/null || true
+            fi
+            echo "Trying dig @1.1.1.1 ..."
+            IP=$(dig +short +time=5 +tries=2 "$HOST" @1.1.1.1 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1) || true
+            echo "dig@1.1.1.1 -> '$IP'"
           fi
           if [ -z "$IP" ]; then
-            echo "::error::Failed to resolve $HOST via 1.1.1.1 and 8.8.8.8"
+            echo "Trying dig @8.8.8.8 ..."
+            IP=$(dig +short +time=5 +tries=2 "$HOST" @8.8.8.8 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1) || true
+            echo "dig@8.8.8.8 -> '$IP'"
+          fi
+          if [ -z "$IP" ]; then
+            echo "::error::Failed to resolve $HOST via system, 1.1.1.1, 8.8.8.8"
             exit 1
           fi
           echo "host=$HOST" >> $GITHUB_OUTPUT
@@ -31,7 +40,7 @@ jobs:
           echo "Resolved $HOST -> $IP"
       - name: Call sync API
         run: |
-          set -euo pipefail
+          set -uo pipefail
           HOST="${{ steps.resolve.outputs.host }}"
           IP="${{ steps.resolve.outputs.ip }}"
           URL="https://$HOST/api/admin/sync"
