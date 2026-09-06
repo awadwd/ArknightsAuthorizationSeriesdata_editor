@@ -252,7 +252,7 @@ export const KC_DATA = {
   ],
   "AiToolsConfig": [
     {
-      "Enabled": false,
+      "Enabled": true,
       "_id": "6996dc2d965f3bcec9cee078",
       "created_at": 1771494445,
       "created_by": 91866855,
