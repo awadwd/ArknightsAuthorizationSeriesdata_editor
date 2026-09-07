@@ -4,7 +4,7 @@
 export const KC_DATA = {
   "Version": [
     {
-      "Version": "v1.9.2.2",
+      "Version": "v1.9.2.3",
       "_id": "6978cc8a509528be72a2ad77",
       "created_at": 1769524362,
       "created_by": 91866855,
@@ -13,38 +13,23 @@ export const KC_DATA = {
       "read_perm": [
         "user:anonymous"
       ],
-      "updated_at": 1788747515,
-      "url": "https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/raw/main/Box_Id.json",
+      "updated_at": 1788758994,
+      "url": "https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/blobs/c130e953b34852ed781bdbb216c26ac9b0b85c4e/Box_Id.json",
       "write_perm": []
     }
   ],
   "choearth_notice": [
     {
-      "_id": "6a71c1a003c997013d74ec34",
-      "created_at": 1785840032,
+      "_id": "6a9e490d25e6e431460d8518",
+      "created_at": 1788758285,
       "created_by": 91866855,
-      "id": "6a71c1a003c997013d74ec34",
-      "imageurl": "https://wx1.sinaimg.cn/large/006Uk2Fyly8ifqo5l8728j30fk078wgg.jpg",
+      "id": "6a9e490d25e6e431460d8518",
+      "imageurl": "https://wx1.sinaimg.cn/large/006Uk2Fyly8iguyvwxqomj30fk078jtm.jpg",
       "linkUrl": "https://mingrifangzhou.tmall.com/",
       "read_perm": [
         "user:anonymous"
       ],
-      "updated_at": 1785840120,
-      "write_perm": [
-        "user:anonymous"
-      ]
-    },
-    {
-      "_id": "6a71c1f501c0c6244970c1f0",
-      "created_at": 1785840117,
-      "created_by": 91866855,
-      "id": "6a71c1f501c0c6244970c1f0",
-      "imageurl": "https://wx2.sinaimg.cn/large/006Uk2Fyly8ifpclx0fz4j30fk078q5z.jpg",
-      "linkUrl": "https://mingrifangzhou.tmall.com/",
-      "read_perm": [
-        "user:anonymous"
-      ],
-      "updated_at": 1785840123,
+      "updated_at": 1788758295,
       "write_perm": [
         "user:anonymous"
       ]
