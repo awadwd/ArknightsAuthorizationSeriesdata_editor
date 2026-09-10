@@ -4,7 +4,7 @@
 export const KC_DATA = {
   "Version": [
     {
-      "Version": "v1.9.2.4",
+      "Version": "v1.9.2.5",
       "_id": "6978cc8a509528be72a2ad77",
       "created_at": 1769524362,
       "created_by": 91866855,
@@ -13,8 +13,8 @@ export const KC_DATA = {
       "read_perm": [
         "user:anonymous"
       ],
-      "updated_at": 1788766297,
-      "url": "https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/blobs/0e6713883120eaa1590bc579b665fa02b7fc450c/Box_Id.json",
+      "updated_at": 1789014141,
+      "url": "https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/blobs/20f7164e033985ee194fe85cc5b7b0654f040b77/Box_Id.json",
       "write_perm": []
     }
   ],
