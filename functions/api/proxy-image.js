@@ -1,11 +1,12 @@
 // Cloudflare Pages Function - Proxy Image
 const ALLOWED_HOSTS = [
-  'i0.hdslb.com', 
-  'i1.hdslb.com', 
-  'i2.hdslb.com', 
-  'media.prts.wiki', 
+  'i0.hdslb.com',
+  'i1.hdslb.com',
+  'i2.hdslb.com',
+  'media.prts.wiki',
   'avatars.githubusercontent.com',
-  'user-images.githubusercontent.com'
+  'user-images.githubusercontent.com',
+  'sinaimg.cn'
 ];
 
 export async function onRequest(context) {
