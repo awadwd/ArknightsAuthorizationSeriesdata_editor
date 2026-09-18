@@ -237,7 +237,7 @@ export const KC_DATA = {
   ],
   "AiToolsConfig": [
     {
-      "Enabled": false,
+      "Enabled": true,
       "_id": "6996dc2d965f3bcec9cee078",
       "created_at": 1771494445,
       "created_by": 91866855,
@@ -245,7 +245,7 @@ export const KC_DATA = {
       "read_perm": [
         "user:anonymous"
       ],
-      "updated_at": 1789657239,
+      "updated_at": 1789728861,
       "write_perm": []
     }
   ]
