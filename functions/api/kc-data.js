@@ -2,6 +2,23 @@
 // 数据来源：知晓云数据表 (KNOW_CLOUD_BASE)
 // 由 /api/admin/sync 或 /api/admin/tables 自动生成
 export const KC_DATA = {
+  "224660": [
+    {
+      "_id": "6ac6692c7a15dc3b09f71ddd",
+      "appid": "wx01bb1ef166cd3f4e",
+      "created_at": 1791387948,
+      "created_by": 91866855,
+      "enable": false,
+      "id": "6ac6692c7a15dc3b09f71ddd",
+      "page": "pages/lucky/lottery/detail?id=8WOkWXjr2Bk",
+      "read_perm": [
+        "user:anonymous"
+      ],
+      "text": "10月特别活动正在进行中...",
+      "updated_at": 1791389693,
+      "write_perm": []
+    }
+  ],
   "Version": [
     {
       "Version": "v1.9.2.5",
@@ -258,7 +275,8 @@ export const KC_TABLES = [
   "questionnaire",
   "SearchWord_Version",
   "Guess_Version",
-  "AiToolsConfig"
+  "AiToolsConfig",
+  "224660"
 ];
 
 // ===== 自建 API 路由 =====

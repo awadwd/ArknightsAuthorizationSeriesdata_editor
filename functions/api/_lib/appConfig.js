@@ -35,7 +35,7 @@ export const DEFAULT_CONFIG = {
     enabled: false,
     schedule: '0 * * * *',
     source: 'knowcloud',
-    tables: ['Version', 'choearth_notice', 'more_notice', 'questionnaire', 'SearchWord_Version', 'Guess_Version', 'AiToolsConfig'],
+    tables: ['Version', 'choearth_notice', 'more_notice', 'questionnaire', 'SearchWord_Version', 'Guess_Version', 'AiToolsConfig', '224660'],
     lastRunAt: null,
     lastResult: null,
   },

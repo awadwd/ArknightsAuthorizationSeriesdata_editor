@@ -1,8 +1,12 @@
 // 共享工具：知晓云拉取、kc-data.js 生成、推送到编辑器仓库
 // 供 /api/admin/sync 与 /api/admin/tables 复用
+// 224660 = 活动横幅表（知晓云 tableID 形式）。
+// 该表归属另一小程序（wx01bb1ef166cd3f4e），用于首页活动横幅位，
+// 字段：enable 布尔开关（false 时端上不渲染）、text 文案、page 跳转路径。
 export const KC_TABLES = [
   "Version", "choearth_notice", "more_notice", "questionnaire",
-  "SearchWord_Version", "Guess_Version", "AiToolsConfig"
+  "SearchWord_Version", "Guess_Version", "AiToolsConfig",
+  "224660"
 ];
 
 const KNOW_CLOUD_BASE = "https://21680db9b1362913357c.myminapp.com/hserve/v2.2";
