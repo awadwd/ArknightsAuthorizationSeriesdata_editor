@@ -252,7 +252,7 @@ export const KC_DATA = {
   ],
   "Guess_Version": [
     {
-      "Version": "260825",
+      "Version": "261019",
       "_id": "69913f05fb1695e735133e90",
       "created_at": 1771126533,
       "created_by": 91866855,
@@ -261,8 +261,8 @@ export const KC_DATA = {
         "user:anonymous"
       ],
       "type": "gitcode",
-      "updated_at": 1788154890,
-      "url": "https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/blobs/a7af2fe14103171cbd1b1d68d0f07f71e2b73b61/guessNew_Box_Id.json",
+      "updated_at": 1792394075,
+      "url": "https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/blobs/9f2529c0e80a4c5d7f84d7add4cc0354d46b7474/guessNew_Box_Id.json",
       "write_perm": []
     }
   ],
