@@ -21,17 +21,17 @@ export const KC_DATA = {
   ],
   "Version": [
     {
-      "Version": "v1.9.2.6",
+      "Version": "v1.9.2.7",
       "_id": "6978cc8a509528be72a2ad77",
       "created_at": 1769524362,
       "created_by": 91866855,
       "id": "6978cc8a509528be72a2ad77",
-      "notice": "各位博士们好~\n目前，小程序的各类api请求逻辑已完成全新重构；新api已无缝接入既有小程序业务及功能，如您在使用过程中遇到问题，欢迎与我们反馈~\n由于不同设备会出现各类不同的异常bug，如遇到bug，可通过以下三个渠道反馈：\n1️⃣小程序内的关于我们->服务支持栏的“问题反馈”问卷；\n2️⃣工具反馈交流QQ频道现已开放，频道号：pd46148437，欢迎各位博士们加入~；\n3️⃣小程序点击右上角\"···\"点击”方舟通行证谷子查询工具“右侧的\">\"再点击“客服”，通过小程序客服渠道反馈；\n\n感谢各位博士们一直以来的支持，如果觉得好用可以推荐给好朋友们哦~",
+      "notice": "各位博士们好~\n数据V1.9.2.7更新已发布，本次更新内容:56.0盒号信息、24.0/44.0复刻信息，建议各位博士们尽快更新\n由于不同设备会出现各类不同的异常bug，如遇到bug，可通过以下三个渠道反馈：\n1️⃣小程序内的关于我们->服务支持栏的“问题反馈”问卷；\n2️⃣工具反馈交流QQ频道现已开放，频道号：pd46148437，欢迎各位博士们加入~；\n3️⃣小程序点击右上角\"···\"点击”方舟通行证谷子查询工具“右侧的\">\"再点击“客服”，通过小程序客服渠道反馈；\n\n感谢各位博士们一直以来的支持，如果觉得好用可以推荐给好朋友们哦~",
       "read_perm": [
         "user:anonymous"
       ],
-      "updated_at": 1791781863,
-      "url": "https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/blobs/b35deac82a7f54f0a6a5f61e7c2bdadf75b2193b/Box_Id.json",
+      "updated_at": 1793593932,
+      "url": "https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/blobs/c8da34488610fa88cd490d3d284fa59d5321bb9d/Box_Id.json",
       "write_perm": []
     }
   ],
