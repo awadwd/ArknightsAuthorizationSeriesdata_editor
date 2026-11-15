@@ -189,6 +189,8 @@
   }
 
   function addCapture(rec) {
+    // 油猴面板自己上传会话时会把计时暂停，别把它自己的请求当成行情接口
+    if (window.__QD_PAUSE__) return null;
     // 同 method+url+body 合并，只留最后一次的响应
     for (var i = 0; i < CAP.length; i++) {
       if (CAP[i].method === rec.method && CAP[i].url === rec.url && CAP[i].body === rec.body) {
@@ -261,7 +263,9 @@
       this.__qd.body = b == null ? '' : String(b);
       var rec = addCapture(this.__qd);
       var self = this;
+      if (!rec) return XD.apply(this, arguments);
       this.addEventListener('load', function () {
+        if (!rec) return;
         rec.status = self.status;
         try {
           var t = self.responseType === '' || self.responseType === 'text' ? self.responseText : '';
@@ -406,6 +410,7 @@
             elite: r.elite || null,
             series: r.series || '',
             online: r.online == null ? null : r.online,
+            spuId: r.spuId || null,
             href: r.href || null,
           };
         }),
