@@ -13,13 +13,85 @@
     <div v-else-if="!isOwner" class="pr-empty">只有仓库所有者可以维护市价。</div>
 
     <div v-else class="pr-wrap">
+      <!-- ── 千岛接入 ─────────────────────────────────────────────── -->
+      <div class="panel">
+        <h3 class="panel-title">千岛接入</h3>
+        <p class="form-hint" style="margin:0 0 12px;">
+          千岛的接口挂在阿里云 WAF 后面，服务端裸请求会被挑战挡住。所以改成
+          <b>用你自己的浏览器先抓到一份行情，把结果交给服务端</b>——cookie 和真实接口一起带上，
+          之后服务端就能复用这份会话去刷新。
+        </p>
+
+        <ol class="qd-steps">
+          <li>点下面的「打开千岛明日方舟岛」，用电脑浏览器（Chrome / Edge）打开</li>
+          <li><b>F12 → Console</b>，点「复制采集脚本」，整段粘贴进去回车</li>
+          <li>在页面上切一下分类、往下滚几屏、或者搜一下「通行证」，让列表重新请求</li>
+          <li>执行 <code>__QD.samples()</code> 看有没有抓到，再执行 <code>__QD.copy()</code></li>
+          <li>把复制到的内容粘回下面的框里，点「保存并解析」</li>
+        </ol>
+
+        <div class="pr-bar" style="margin-top:0;">
+          <a class="btn btn-secondary" :href="islandUrl" target="_blank" rel="noopener">打开千岛明日方舟岛 ↗</a>
+          <button class="btn btn-secondary" @click="copyCollector">复制采集脚本</button>
+          <button class="btn btn-secondary" @click="testSession" :disabled="!session.present || testing">
+            {{ testing ? '测试中…' : '测试服务端直连' }}
+          </button>
+          <button class="btn btn-secondary" @click="clearSession" :disabled="!session.present">清除会话</button>
+        </div>
+
+        <div v-if="session.present" class="qd-status" :class="session.expired ? 'exp' : 'ok'">
+          <span class="qd-dot"></span>
+          <template v-if="session.expired">
+            会话已过期（{{ session.ageMinutes }} 分钟前保存）—— 回千岛重新抓一次
+          </template>
+          <template v-else>
+            会话有效 · {{ session.cookieCount }} 个 cookie · {{ session.apiCount }} 个接口 ·
+            {{ session.sampleCount }} 条记录 · {{ session.ageMinutes }} 分钟前保存 ·
+            约 {{ session.expiresInMinutes }} 分钟后过期
+          </template>
+        </div>
+        <div v-else class="qd-status none"><span class="qd-dot"></span>还没有会话，先按上面五步抓一次</div>
+
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">粘贴 <code>__QD.copy()</code> 的结果（JSON）</label>
+          <textarea class="form-input pr-json" rows="5" v-model="bundleText"
+            placeholder='{"cookie":"acw_sc__v2=...; ...","apis":[...],"samples":[{"title":"...","price":120}]}'></textarea>
+          <span class="form-hint">只存在服务端 KV 里，接口回显会打码；不会进仓库、不会进 git。</span>
+        </div>
+
+        <div class="pr-bar" style="margin-top:8px;">
+          <button class="btn btn-primary" @click="saveSession" :disabled="savingSession || !bundleText.trim()">
+            {{ savingSession ? '解析中…' : '保存并解析' }}
+          </button>
+          <label class="qd-check">
+            <input type="checkbox" v-model="form.requirePassKeyword" @change="saveConfig(true)" />
+            只认标题里带「通行证」的记录
+          </label>
+        </div>
+
+        <div v-if="sessionDetected" class="qd-detected">
+          解析到：原始记录 <b>{{ sessionDetected.samples }}</b> 条，其中标了精英化
+          <b>{{ sessionDetected.withElite }}</b> 条、带「通行证」<b>{{ sessionDetected.withPass }}</b> 条，
+          可用接口 <b>{{ sessionDetected.apis }}</b> 个。
+          <div v-if="sessionDetected.preview && sessionDetected.preview.length" class="qd-preview">
+            <div v-for="(p, i) in sessionDetected.preview" :key="i">
+              <span class="qd-price">¥{{ p.price }}</span>
+              <span class="qd-title">{{ String(p.title).slice(0, 70) }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-if="testResult" class="pr-alert" :class="testResult.ok ? 'ok' : 'info'" style="white-space:pre-wrap;">
+          {{ testResult.text }}
+        </div>
+      </div>
+
       <div class="panel">
         <h3 class="panel-title">数据源</h3>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">来源</label>
             <select class="form-input" v-model="form.provider">
-              <option value="qiandao">千岛行情（需填接口）</option>
+              <option value="qiandao">千岛行情（浏览器采集 / 会话直连）</option>
               <option value="manual">手工价表（永远可用）</option>
               <option value="import">导入 JSON / CSV</option>
             </select>
@@ -41,6 +113,25 @@
         </div>
 
         <div v-if="form.provider === 'qiandao'" class="pr-sub">
+          <p class="form-hint" style="margin:0 0 10px;">
+            只要上面存过会话，下面的接口地址就可以留空——采集时会重放会话里记录的真实接口。
+            这一块是「哪天千岛放出稳定公开接口」时的兜底。
+          </p>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">价格来源</label>
+              <select class="form-input" v-model="form.priceField">
+                <option value="strikePrice">市价 strikePrice（成交/划价）</option>
+                <option value="minOnlinePrice">最低在售 minOnlinePrice</option>
+              </select>
+              <span class="form-hint">千岛每个商品同时给这两个值，箱子价一般看 strikePrice。</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">只取某一弹（可空）</label>
+              <input class="form-input" v-model="form.seriesFilter" placeholder="通行认证56.0" />
+              <span class="form-hint">留空=所有系列混在一起取中位数；填了就只算这一弹。</span>
+            </div>
+          </div>
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">接口地址（抓包得到）</label>
@@ -117,12 +208,25 @@
       <div class="panel" v-if="summary">
         <h3 class="panel-title">采集结果</h3>
         <div class="pr-stats">
-          <div><span>样本</span><b>{{ summary.samples }}</b></div>
+          <div><span>抓取记录</span><b>{{ summary.recordsCount || 0 }}</b></div>
+          <div><span>过滤后</span><b>{{ summary.filteredCount || 0 }}</b></div>
+          <div><span>报价样本</span><b>{{ summary.samples }}</b></div>
           <div><span>命中干员</span><b>{{ summary.matchedCharacters }}</b></div>
           <div><span>待改动</span><b>{{ summary.diffs }}</b></div>
+          <div><span>数据来源</span><b>{{ sourceLabel }}</b></div>
           <div><span>目标仓库</span><b>{{ summary.target.kind }} · {{ summary.target.base }}</b></div>
         </div>
-        <div v-if="summary.errors && summary.errors.length" class="pr-alert info">
+        <div v-if="summary.stale" class="pr-alert info" style="margin-top:10px;">
+          这次用的是你上次在浏览器里抓到的快照（服务端直连失败），价格可能不是最新的。
+        </div>
+        <div v-if="summary.relaxedKeyword" class="pr-alert info" style="margin-top:10px;">
+          加上「通行证」过滤后一条都不剩，已自动放宽——建议确认一下这个岛的分类是不是把通行证和其他周边混在一起。
+        </div>
+        <div v-if="summary.hint" class="pr-alert info" style="margin-top:10px;">{{ summary.hint }}</div>
+        <div v-if="summary.unmatchedCount" class="pr-alert info" style="margin-top:10px;">
+          有 {{ summary.unmatchedCount }} 条记录没匹配上干员名（前几条：{{ (summary.unmatched || []).slice(0, 3).join(' / ') }}）
+        </div>
+        <div v-if="summary.errors && summary.errors.length" class="pr-alert info" style="margin-top:10px;">
           部分请求失败：{{ summary.errors.slice(0, 3).join('；') }}
         </div>
       </div>
@@ -194,14 +298,24 @@ export default {
       diffs: [],
       summary: null,
       importText: '',
+      session: { present: false },
+      sessionDetected: null,
+      bundleText: '',
+      savingSession: false,
+      testing: false,
+      testResult: null,
+      islandId: '300569',
       form: {
         provider: 'manual',
         minSamples: 3,
         outlierMad: 3,
         elite1Ratio: 0.72,
+        requirePassKeyword: true,
         endpoint: '',
         method: 'POST',
         mode: 'feed',
+        priceField: 'strikePrice',
+        seriesFilter: '',
         headersText: '',
         body: '',
         mappingItems: 'data.list',
@@ -212,6 +326,16 @@ export default {
     }
   },
   computed: {
+    islandUrl() {
+      return 'https://qiandao.com/island?id=' + (this.islandId || '300569')
+    },
+    sourceLabel() {
+      const s = this.summary && this.summary.source
+      if (s === 'session-replay') return '会话重放'
+      if (s === 'session-cache') return '会话快照'
+      if (s === 'endpoint') return '手填接口'
+      return (this.summary && this.summary.provider) || '—'
+    },
     filteredMatrix() {
       const k = this.matrixFilter.trim().toLowerCase()
       if (!k) return this.matrix
@@ -233,14 +357,19 @@ export default {
         const { data } = await axios.get('/api/prices')
         if (!data || !data.success) throw new Error((data && data.error) || '读取失败')
         this.matrix = data.matrix || []
+        this.session = (data.session && data.session.present) ? data.session : { present: false }
         const p = data.prices || {}
+        this.islandId = p.islandId || '300569'
         this.form.provider = p.provider || 'manual'
         this.form.minSamples = p.minSamples || 3
         this.form.outlierMad = p.outlierMad || 3
         this.form.elite1Ratio = p.elite1Ratio || 0.72
+        this.form.requirePassKeyword = p.requirePassKeyword !== false
         this.form.endpoint = p.endpoint || ''
         this.form.method = p.method || 'POST'
         this.form.mode = p.mode || 'feed'
+        this.form.priceField = p.priceField || 'strikePrice'
+        this.form.seriesFilter = p.seriesFilter || ''
         this.form.mappingItems = (p.mapping && p.mapping.items) || 'data.list'
         this.form.mappingName = (p.mapping && p.mapping.name) || 'title'
         this.form.mappingPrice = (p.mapping && p.mapping.price) || 'price'
@@ -250,6 +379,87 @@ export default {
         this.error = '读取市价失败：' + ((e.response && e.response.data && e.response.data.error) || e.message)
       } finally {
         this.loading = false
+      }
+    },
+    // 复制采集脚本：直接拉 public/qiandao-collector.js，保证和仓库里那份一致
+    async copyCollector() {
+      this.error = ''
+      try {
+        const res = await fetch('/qiandao-collector.js', { cache: 'no-store' })
+        if (!res.ok) throw new Error('HTTP ' + res.status)
+        const code = await res.text()
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(code)
+        } else {
+          const ta = document.createElement('textarea')
+          ta.value = code
+          ta.style.position = 'fixed'
+          ta.style.opacity = '0'
+          document.body.appendChild(ta)
+          ta.select()
+          document.execCommand('copy')
+          document.body.removeChild(ta)
+        }
+        this.notice = '脚本已复制（' + code.length + ' 字符）。去千岛页面 F12 → Console 粘贴回车。'
+      } catch (e) {
+        this.error = '复制脚本失败：' + e.message
+      }
+    },
+    async saveSession() {
+      this.savingSession = true
+      this.error = ''
+      this.notice = ''
+      this.sessionDetected = null
+      this.testResult = null
+      try {
+        let bundle
+        try {
+          bundle = JSON.parse(this.bundleText)
+        } catch (e) {
+          throw new Error('粘进来的不是合法 JSON，确认复制完整了（__QD.copy() 会一次性复制）')
+        }
+        const { data } = await axios.post('/api/prices?action=save-session', { bundle })
+        if (!data || !data.success) throw new Error((data && data.error) || '保存失败')
+        this.session = data.session || { present: false }
+        this.sessionDetected = data.detected || null
+        this.bundleText = ''
+        this.notice = '会话已保存' + (data.note ? '：' + data.note : '')
+        await this.preview()
+      } catch (e) {
+        this.error = '保存失败：' + ((e.response && e.response.data && e.response.data.error) || e.message)
+      } finally {
+        this.savingSession = false
+      }
+    },
+    async testSession() {
+      this.testing = true
+      this.testResult = null
+      try {
+        const { data } = await axios.post('/api/prices?action=session-test', {})
+        const lines = (data.results || []).map(r => r.ok
+          ? '✓ ' + r.url + ' → ' + r.records + ' 条'
+          : '✗ ' + r.url + ' → ' + r.error)
+        this.testResult = {
+          ok: !!data.ok,
+          text: (data.ok ? '服务端能直连，可以自动刷新。' : (data.error || '服务端直连不通，只能靠浏览器快照。')) + '\n' + lines.join('\n'),
+        }
+        if (data.session) this.session = data.session
+      } catch (e) {
+        this.testResult = { ok: false, text: '测试失败：' + ((e.response && e.response.data && e.response.data.error) || e.message) }
+      } finally {
+        this.testing = false
+      }
+    },
+    async clearSession() {
+      if (!confirm('清除已保存的千岛会话？之后需要重新抓一次。')) return
+      try {
+        await axios.post('/api/prices?action=clear-session', {})
+        this.session = { present: false }
+        this.sessionDetected = null
+        this.testResult = null
+        this.notice = '会话已清除'
+      } catch (e) {
+        this.error = '清除失败：' + e.message
       }
     },
     payloadBase() {
@@ -278,10 +488,10 @@ export default {
       }
       return out
     },
-    async saveConfig() {
+    async saveConfig(quiet) {
       this.saving = true
       this.error = ''
-      this.notice = ''
+      if (!quiet) this.notice = ''
       try {
         const headers = this.form.headersText.trim() ? JSON.parse(this.form.headersText) : {}
         const { data } = await axios.post('/api/prices?action=save-config', {
@@ -291,10 +501,13 @@ export default {
             minSamples: this.form.minSamples,
             outlierMad: this.form.outlierMad,
             elite1Ratio: this.form.elite1Ratio,
+            requirePassKeyword: this.form.requirePassKeyword,
             qiandao: {
               endpoint: this.form.endpoint,
               method: this.form.method,
               mode: this.form.mode,
+              priceField: this.form.priceField,
+              seriesFilter: this.form.seriesFilter,
               headers,
               body: this.form.body,
               mapping: {
@@ -309,7 +522,7 @@ export default {
         if (!data || !data.success) throw new Error((data && data.error) || '保存失败')
         this.notice = '数据源配置已保存'
       } catch (e) {
-        this.error = '保存失败：' + (e.message || e)
+        this.error = '保存失败：' + ((e.response && e.response.data && e.response.data.error) || e.message || e)
       } finally {
         this.saving = false
       }
@@ -416,4 +629,22 @@ export default {
 .pr-down { color: #047857; }
 .pr-new { color: #2563eb; }
 .pr-filter { width: 220px; height: 32px; font-size: 13px; }
+
+/* 千岛接入 */
+.qd-steps { margin: 0 0 14px; padding-left: 20px; font-size: 13px; line-height: 1.9; color: #374151; }
+.qd-steps li { margin-bottom: 2px; }
+.qd-steps code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.qd-status { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 12px;
+  border-radius: 8px; font-size: 13px; background: #f9fafb; color: #4b5563; }
+.qd-status.ok { background: #ecfdf5; color: #047857; }
+.qd-status.exp { background: #fffbeb; color: #b45309; }
+.qd-status.none { background: #f9fafb; color: #6b7280; }
+.qd-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: 0 0 8px; }
+.qd-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #374151; cursor: pointer; }
+.qd-detected { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #f8fafc;
+  border: 1px solid #eef1f5; font-size: 13px; color: #374151; }
+.qd-preview { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.qd-preview > div { display: flex; gap: 8px; align-items: baseline; }
+.qd-price { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #b45309; min-width: 60px; }
+.qd-title { color: #6b7280; font-size: 12px; }
 </style>
