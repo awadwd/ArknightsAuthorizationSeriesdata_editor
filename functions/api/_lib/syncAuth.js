@@ -39,6 +39,6 @@ export function syncCors(methods) {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': methods || 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Sync-Token',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Sync-Token, X-Collect-Token',
   };
 }

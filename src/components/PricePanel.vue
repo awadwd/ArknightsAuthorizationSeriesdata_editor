@@ -22,22 +22,67 @@
           之后服务端就能复用这份会话去刷新。
         </p>
 
-        <ol class="qd-steps">
-          <li>点下面的「打开千岛明日方舟岛」，用电脑浏览器（Chrome / Edge）打开</li>
-          <li><b>F12 → Console</b>，点「复制采集脚本」，整段粘贴进去回车</li>
-          <li>在页面上切一下分类、往下滚几屏、或者搜一下「通行证」，让列表重新请求</li>
-          <li>执行 <code>__QD.samples()</code> 看有没有抓到，再执行 <code>__QD.copy()</code></li>
-          <li>把复制到的内容粘回下面的框里，点「保存并解析」</li>
-        </ol>
-
-        <div class="pr-bar" style="margin-top:0;">
-          <a class="btn btn-secondary" :href="islandUrl" target="_blank" rel="noopener">打开千岛明日方舟岛 ↗</a>
-          <button class="btn btn-secondary" @click="copyCollector">复制采集脚本</button>
-          <button class="btn btn-secondary" @click="testSession" :disabled="!session.present || testing">
-            {{ testing ? '测试中…' : '测试服务端直连' }}
+        <div class="qd-tabs">
+          <button :class="['qd-tab', channel === 'userscript' ? 'on' : '']" @click="channel = 'userscript'">
+            油猴脚本 <span class="qd-rec">推荐</span>
           </button>
-          <button class="btn btn-secondary" @click="clearSession" :disabled="!session.present">清除会话</button>
+          <button :class="['qd-tab', channel === 'console' ? 'on' : '']" @click="channel = 'console'">控制台脚本</button>
         </div>
+
+        <!-- ── 渠道一：油猴 ─────────────────────────────────────────── -->
+        <template v-if="channel === 'userscript'">
+          <ol class="qd-steps">
+            <li>装 <b>Tampermonkey</b>（Violentmonkey 也行），浏览器扩展商店里搜就有</li>
+            <li>点下面的「复制油猴脚本」→ 扩展图标 →「添加新脚本」→ 全选删掉 → 粘贴 → <b>Ctrl/⌘ + S</b> 保存</li>
+            <li>打开「千岛明日方舟岛」，右下角会出现「千岛采集」小面板</li>
+            <li>在本页生成<b>采集令牌</b>，填进面板里（只存在你本机浏览器，脚本靠它直传）</li>
+            <li>面板里点「自动搜索」让脚本自己翻页/搜索，或直接滚动页面手动触发</li>
+          </ol>
+
+          <div class="pr-bar" style="margin-top:0;">
+            <a class="btn btn-secondary" :href="islandUrl" target="_blank" rel="noopener">打开千岛明日方舟岛 ↗</a>
+            <button class="btn btn-secondary" @click="copyUserscript">复制油猴脚本</button>
+            <button class="btn btn-secondary" @click="downloadUserscript">下载 .user.js</button>
+          </div>
+
+          <div class="qd-token">
+            <div class="qd-kv">
+              <span>采集令牌</span>
+              <b>{{ collectToken.set ? collectToken.hint : '未生成（只能手动复制，不能直传）' }}</b>
+            </div>
+            <div class="pr-bar" style="margin-top:8px;">
+              <button class="btn btn-primary" @click="rotateToken('generate')" :disabled="tokenBusy">
+                {{ collectToken.set ? '重新生成令牌' : '生成采集令牌' }}
+              </button>
+              <button class="btn btn-secondary" @click="rotateToken('clear')" :disabled="tokenBusy || !collectToken.set">
+                清空令牌
+              </button>
+              <button class="btn btn-secondary" @click="copyToken" :disabled="!newToken">复制刚生成的</button>
+            </div>
+            <div v-if="newToken" class="pr-alert ok" style="word-break:break-all;">
+              新令牌（只显示这一次，丢了重新生成）：<code>{{ newToken }}</code>
+            </div>
+            <span class="form-hint">
+              这个令牌只能写「一份千岛会话缓存」——读不到配置、提不了 PR、改不了仓库；清空后已装好的脚本立刻失效。
+            </span>
+          </div>
+        </template>
+
+        <!-- ── 渠道二：控制台 ───────────────────────────────────────── -->
+        <template v-else>
+          <ol class="qd-steps">
+            <li>点下面的「打开千岛明日方舟岛」，用电脑浏览器（Chrome / Edge）打开</li>
+            <li><b>F12 → Console</b>，点「复制采集脚本」，整段粘贴进去回车</li>
+            <li>在页面上切一下分类、往下滚几屏、或者搜一下「通行证」，让列表重新请求</li>
+            <li>执行 <code>__QD.samples()</code> 看有没有抓到，再执行 <code>__QD.copy()</code></li>
+            <li>把复制到的内容粘回下面的框里，点「保存并解析」</li>
+          </ol>
+
+          <div class="pr-bar" style="margin-top:0;">
+            <a class="btn btn-secondary" :href="islandUrl" target="_blank" rel="noopener">打开千岛明日方舟岛 ↗</a>
+            <button class="btn btn-secondary" @click="copyCollector">复制采集脚本</button>
+          </div>
+        </template>
 
         <div v-if="session.present" class="qd-status" :class="session.expired ? 'exp' : 'ok'">
           <span class="qd-dot"></span>
@@ -50,7 +95,14 @@
             约 {{ session.expiresInMinutes }} 分钟后过期
           </template>
         </div>
-        <div v-else class="qd-status none"><span class="qd-dot"></span>还没有会话，先按上面五步抓一次</div>
+        <div v-else class="qd-status none"><span class="qd-dot"></span>还没有会话，先按上面步骤抓一次</div>
+
+        <div class="pr-bar" style="margin-top:10px;">
+          <button class="btn btn-secondary" @click="testSession" :disabled="!session.present || testing">
+            {{ testing ? '测试中…' : '测试服务端直连' }}
+          </button>
+          <button class="btn btn-secondary" @click="clearSession" :disabled="!session.present">清除会话</button>
+        </div>
 
         <div class="form-group" style="margin-top:12px;">
           <label class="form-label">粘贴 <code>__QD.copy()</code> 的结果（JSON）</label>
@@ -344,6 +396,10 @@ export default {
       testing: false,
       testResult: null,
       islandId: '300569',
+      channel: 'userscript',
+      collectToken: { set: false },
+      newToken: '',
+      tokenBusy: false,
       form: {
         provider: 'manual',
         minSamples: 3,
@@ -427,6 +483,7 @@ export default {
         this.matrix = data.matrix || []
         this.session = (data.session && data.session.present) ? data.session : { present: false }
         this.crawl = data.crawl || { present: false }
+        this.collectToken = data.collectToken || { set: false }
         const p = data.prices || {}
         this.islandId = p.islandId || '300569'
         this.form.provider = p.provider || 'manual'
@@ -472,6 +529,81 @@ export default {
         this.notice = '脚本已复制（' + code.length + ' 字符）。去千岛页面 F12 → Console 粘贴回车。'
       } catch (e) {
         this.error = '复制脚本失败：' + e.message
+      }
+    },
+    // 复制油猴脚本：把内置的默认地址替换成当前站点，自建部署也能直接用
+    async fetchUserscript() {
+      const res = await fetch('/qiandao.user.js', { cache: 'no-store' })
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      const code = await res.text()
+      return code.replace(
+        /var DEFAULT_BASE = '[^']*'/,
+        "var DEFAULT_BASE = '" + location.origin + "'"
+      )
+    },
+    async copyUserscript() {
+      this.error = ''
+      this.notice = ''
+      try {
+        const code = await this.fetchUserscript()
+        await this.copyText(code)
+        this.notice = '油猴脚本已复制（' + code.length + ' 字符）。到 Tampermonkey「添加新脚本」里粘贴并保存。'
+      } catch (e) {
+        this.error = '复制油猴脚本失败：' + e.message
+      }
+    },
+    async downloadUserscript() {
+      this.error = ''
+      try {
+        const code = await this.fetchUserscript()
+        const blob = new Blob([code], { type: 'text/javascript;charset=utf-8' })
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = 'qiandao-collect.user.js'
+        a.click()
+        setTimeout(() => URL.revokeObjectURL(a.href), 3000)
+        this.notice = '已下载 qiandao-collect.user.js。拖进浏览器窗口或 Tampermonkey 会询问是否安装。'
+      } catch (e) {
+        this.error = '下载失败：' + e.message
+      }
+    },
+    async copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text)
+        return
+      }
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    },
+    async rotateToken(op) {
+      if (op === 'clear' && !window.confirm('清空后已装好的油猴脚本会立刻失效，确定？')) return
+      this.tokenBusy = true
+      this.error = ''
+      try {
+        const { data } = await axios.post('/api/prices?action=collect-token', { op })
+        if (!data || !data.success) throw new Error((data && data.error) || '生成失败')
+        this.collectToken = data.collectToken || { set: !!data.token }
+        this.newToken = data.token || ''
+        this.notice = data.note || (op === 'clear' ? '已清空采集令牌' : '已生成采集令牌')
+      } catch (e) {
+        this.error = '令牌操作失败：' + ((e.response && e.response.data && e.response.data.error) || e.message)
+      } finally {
+        this.tokenBusy = false
+      }
+    },
+    async copyToken() {
+      if (!this.newToken) return
+      try {
+        await this.copyText(this.newToken)
+        this.notice = '令牌已复制，粘进千岛页面右下角面板的「采集令牌」里'
+      } catch (e) {
+        this.error = '复制失败：' + e.message
       }
     },
     async saveSession() {
@@ -759,6 +891,14 @@ export default {
 .pr-filter { width: 220px; height: 32px; font-size: 13px; }
 
 /* 千岛接入 */
+.qd-tabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid #eef2f7; }
+.qd-tab { position: relative; padding: 7px 14px; border: none; background: transparent; font-size: 13px;
+  color: #6b7280; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.qd-tab:hover { color: #374151; }
+.qd-tab.on { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+.qd-rec { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 4px;
+  background: #eff6ff; color: #2563eb; font-size: 10px; font-weight: 500; vertical-align: 1px; }
+.qd-token { margin-top: 12px; padding: 12px; border-radius: 8px; background: #f8fafc; border: 1px solid #eef2f7; }
 .qd-steps { margin: 0 0 14px; padding-left: 20px; font-size: 13px; line-height: 1.9; color: #374151; }
 .qd-steps li { margin-bottom: 2px; }
 .qd-steps code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }

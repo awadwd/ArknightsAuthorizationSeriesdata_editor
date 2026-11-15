@@ -62,6 +62,10 @@ export const DEFAULT_CONFIG = {
     qiandao: {
       islandId: '300569',          // 明日方舟岛
       islandName: '明日方舟岛',
+      // 采集令牌：油猴脚本 / 第三方页面凭借它调用 action=save-session。
+      // 只能写会话缓存，读不到配置、提不了 PR；生成与清空走 action=collect-token。
+      collectToken: '',
+      collectTokenAt: null,
       // 实测可用：POST/GET https://api.qiandao.com/gactus/posts/by-tag-v4（需要带 acw_sc__v2/v3）
       endpoint: 'https://api.qiandao.com/gactus/posts/by-tag-v4',
       method: 'GET',
@@ -94,9 +98,13 @@ export const DEFAULT_CONFIG = {
 
 export async function getAppConfig(env) {
   try {
-    const raw = await env.AUTH_STORE && env.AUTH_STORE.get('config');
+    // 注意这里必须是 `env.AUTH_STORE ? await ... : null`：
+    // 写成 `await env.AUTH_STORE && env.AUTH_STORE.get('config')` 时，await 只作用于
+    // 前半截，整个表达式返回的是没被 await 的 Promise，JSON.parse 会拿到 "[object Promise]"
+    // 然后永远 fallback 到默认值——配置存进去了却读不出来。
+    const raw = env && env.AUTH_STORE ? await env.AUTH_STORE.get('config') : null;
     if (raw) {
-      const parsed = JSON.parse(raw);
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       return deepMerge(clone(DEFAULT_CONFIG), parsed);
     }
   } catch (e) {

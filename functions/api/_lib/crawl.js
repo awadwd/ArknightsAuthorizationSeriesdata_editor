@@ -65,6 +65,42 @@ export async function resetJob(env) {
   await env.AUTH_STORE.delete(JOB_KEY);
 }
 
+// 浏览器端（油猴自动搜索）一次能抓到几千条，直接灌进任务里，
+// 比让服务端再重放一遍接口快得多，也不会撞 WAF。
+// 只合并不改 phase：任务已完成/退避中的状态交给 crawl-step 判断。
+export async function seedRecords(env, cfg, records) {
+  if (!Array.isArray(records) || !records.length) return { added: 0, records: 0 };
+  const incoming = [];
+  for (const r of records) {
+    const price = Number(r.price);
+    const title = String(r.title || r.name || '').slice(0, 200);
+    if (!title || !isFinite(price) || price <= 0) continue;
+    incoming.push({
+      // name 同时是去重键的一部分，没有就用标题兜底，避免一堆 null|ELITE2| 互相覆盖
+      name: r.name ? String(r.name).slice(0, 60) : title.slice(0, 60),
+      title,
+      elite: r.elite || null,
+      series: r.series ? String(r.series).slice(0, 60) : '',
+      price,
+      online: r.online == null ? null : Number(r.online),
+      spuId: r.spuId ? String(r.spuId) : null,
+      count: 1,
+      source: 'browser',
+    });
+  }
+  if (!incoming.length) return { added: 0, records: 0 };
+
+  let job = await getJob(env);
+  if (!job) job = blankJob(cfg);
+  const added = mergeRecords(job, incoming);
+  if (added) {
+    job.lastRunAt = new Date().toISOString();
+    job.note = `浏览器采集并入 ${added} 条（本次提交 ${incoming.length} 条）`;
+    await saveJob(env, job);
+  }
+  return { added, records: (job.records || []).length };
+}
+
 function cfgOf(job) {
   return Object.assign({}, DEFAULT_CRAWL, (job && job.config) || {});
 }

@@ -58,6 +58,7 @@ export function normalizeBundle(raw) {
     elite: s.elite || null,
     series: s.series ? String(s.series).slice(0, 60) : '',
     online: s.online == null ? null : Number(s.online),
+    spuId: s.spuId ? String(s.spuId).slice(0, 40) : null,
     href: s.href ? String(s.href).slice(0, 500) : null,
   })).filter(s => s.title && isFinite(s.price) && s.price > 0) : [];
 

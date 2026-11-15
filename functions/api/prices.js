@@ -21,7 +21,8 @@ import {
   resolveSamples, filterRecords, extractRecords, eliteFromTitle,
 } from './_lib/prices.js';
 import { saveSession, getSession, clearSession, sessionStatus, qdRequest, pickReplayApis } from './_lib/qiandao.js';
-import { getJob, saveJob, resetJob, runStep, jobSummary } from './_lib/crawl.js';
+import { getJob, saveJob, resetJob, runStep, jobSummary, seedRecords } from './_lib/crawl.js';
+import { verifyCollectToken, collectTokenStatus, rotateCollectToken } from './_lib/collectAuth.js';
 
 function json(data, status) {
   return new Response(JSON.stringify(data), { status: status || 200, headers: syncCors('GET, POST, OPTIONS') });
@@ -189,6 +190,7 @@ export async function onRequestGet(context) {
       matrix: matrixOf(boxes),
       session: sessionStatus(session),
       crawl: jobSummary(job, pcfg),
+      collectToken: collectTokenStatus(cfg),
       prices: {
         enabled: !!pcfg.enabled,
         provider: pcfg.provider || 'manual',
@@ -220,6 +222,42 @@ export async function onRequestPost(context) {
   const url = new URL(request.url);
   const action = url.searchParams.get('action') || 'preview';
 
+  const cfgPre = await getAppConfig(env);
+
+  // ── 采集令牌通道（油猴脚本 / 第三方页面）────────────────────────────────
+  // 只放行 save-session：写一份会话缓存，读不到配置、提不了 PR、改不了仓库。
+  if (!request.headers.get('X-Sync-Token') && !request.headers.get('Authorization') && verifyCollectToken(request, cfgPre)) {
+    let body = {};
+    try { body = await request.json(); } catch (e) { body = {}; }
+    if (action !== 'save-session') {
+      return json({ success: false, error: '采集令牌只能保存会话（action=save-session）' }, 403);
+    }
+    try {
+      const bundle = await saveSession(env, body.bundle || body);
+      // 浏览器已经抓到的记录直接并入抓取任务，省掉服务端重放
+      const seed = await seedRecords(env, cfgPre.prices, bundle.samples);
+      return json({
+        success: true,
+        via: 'collect-token',
+        session: sessionStatus(bundle),
+        seeded: seed.added,
+        crawlRecords: seed.records,
+        detected: {
+          samples: bundle.samples.length,
+          withElite: bundle.samples.filter(s => s.elite || eliteFromTitle(s.title)).length,
+          withPass: bundle.samples.filter(s => /通行证|通行|pass/i.test(s.title)).length,
+          apis: bundle.apis.length,
+          preview: bundle.samples.slice(0, 5),
+        },
+        note: bundle.samples.length === 0
+          ? '只存了 cookie 和接口，没抓到行情记录。回千岛页面多滚几屏再传一次。'
+          : (seed.added ? `已并入抓取任务 ${seed.added} 条新记录` : '记录都已存在，没有新增'),
+      });
+    } catch (e) {
+      return json({ success: false, error: e.message }, 400);
+    }
+  }
+
   const machineAuth = await verifySyncRequest(request, env);
   const ownerAuth = machineAuth && machineAuth.isOwner ? machineAuth : await verifyRequest(request);
   if (!ownerAuth) return json({ success: false, error: 'not authenticated' }, 401);
@@ -229,7 +267,27 @@ export async function onRequestPost(context) {
   let body = {};
   try { body = await request.json(); } catch (e) { body = {}; }
 
-  const cfg = await getAppConfig(env);
+  const cfg = cfgPre;
+
+  // ── 采集令牌：给油猴脚本用，只能写会话 ──────────────────────────────────
+  if (action === 'collect-token') {
+    if (machineAuth && machineAuth.machine) return json({ success: false, error: '机器账号不能改采集令牌' }, 403);
+    const op = body.op === 'clear' ? 'clear' : 'generate';
+    try {
+      const r = await rotateCollectToken(env, op);
+      return json({
+        success: true,
+        op,
+        token: r.token,          // 只在生成时返回一次完整值
+        collectToken: r.status,
+        note: op === 'clear'
+          ? '已清空，已装好的油猴脚本会立刻失效'
+          : '这个令牌只显示这一次，复制进油猴面板；丢了就重新生成',
+      });
+    } catch (e) {
+      return json({ success: false, error: e.message }, 500);
+    }
+  }
 
   // ── 千岛会话（浏览器控制台抓到的 cookie + 接口）────────────────────────────
   if (action === 'save-session') {
@@ -237,6 +295,7 @@ export async function onRequestPost(context) {
     try {
       const bundle = await saveSession(env, body.bundle || body);
       const status = sessionStatus(bundle);
+      const seed = await seedRecords(env, cfg.prices, bundle.samples);
       // 顺手报一下「这份数据能不能用」，省得用户点进去才发现匹配不到
       const samplePreview = bundle.samples.slice(0, 5);
       const withElite = bundle.samples.filter(s => s.elite || eliteFromTitle(s.title)).length;
@@ -244,6 +303,8 @@ export async function onRequestPost(context) {
       return json({
         success: true,
         session: status,
+        seeded: seed.added,
+        crawlRecords: seed.records,
         detected: {
           samples: bundle.samples.length,
           withElite,
@@ -254,7 +315,7 @@ export async function onRequestPost(context) {
         },
         note: bundle.samples.length === 0
           ? '只存了 cookie 和接口，没有抓到行情记录。服务端会尝试重放接口；如果被拦，回页面多翻几页再抓一次。'
-          : null,
+          : (seed.added ? `已并入抓取任务 ${seed.added} 条新记录（共 ${seed.records} 条）` : '记录都已存在，没有新增'),
       });
     } catch (e) {
       return json({ success: false, error: e.message }, 400);
