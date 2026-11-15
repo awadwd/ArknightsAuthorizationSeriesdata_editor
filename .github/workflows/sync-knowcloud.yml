@@ -26,6 +26,10 @@ jobs:
       contents: write
       pull-requests: none
       statuses: none
+    # secrets 上下文不能直接写进 step 的 if 表达式（会被判为 Unrecognized named-value），
+    # 所以先落到 job 级 env，再用 env.CF_DEPLOY_HOOK 判断；没配时为空字符串。
+    env:
+      CF_DEPLOY_HOOK: ${{ secrets.CF_DEPLOY_HOOK }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -68,6 +72,6 @@ jobs:
       # 显式触发 Pages 重建：有些项目的 Pages 并不监听 bot 的 push，
       # 或者生产分支不是 master，这一步能把"已部署但没重建"的坑堵住。
       - name: Trigger Pages deploy hook
-        if: steps.diff.outputs.changed == 'true' && secrets.CF_DEPLOY_HOOK != ''
+        if: steps.diff.outputs.changed == 'true' && env.CF_DEPLOY_HOOK != ''
         run: |
-          curl -sS -X POST "${{ secrets.CF_DEPLOY_HOOK }}" -o /dev/null -w "deploy hook: %{http_code}\n"
+          curl -sS -X POST "$CF_DEPLOY_HOOK" -o /dev/null -w "deploy hook: %{http_code}\n"
