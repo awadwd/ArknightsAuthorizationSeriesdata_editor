@@ -24,6 +24,47 @@
   var MAX_RESP = 800000;  // 单个响应体最多留这么多字符，防止内存爆
   var MAX_ITEMS = 5000;   // 最多留这么多条记录
 
+  // 千岛的搜索是按 Enter 就跳一个新页面（/search?...），一换页这些内存就没了。
+  // 所以把「已抽出的样本」和「接口元信息」落一份到 sessionStorage，跳页回来先读回来，
+  // 自动搜索才不会被一次跳转清空。
+  var SS_KEY = 'qd_collected_v1';
+  var RESTORED = { samples: [], apis: [] };
+  var persistTimer = null;
+
+  function restoreSaved() {
+    try {
+      var saved = JSON.parse(sessionStorage.getItem(SS_KEY) || 'null');
+      if (!saved) return;
+      // 超过 12 小时就当是上次留下的垃圾，别把不相干的价带进来
+      if (saved.at && Date.now() - saved.at > 12 * 3600 * 1000) { sessionStorage.removeItem(SS_KEY); return; }
+      RESTORED.samples = Array.isArray(saved.samples) ? saved.samples.slice(0, 3000) : [];
+      RESTORED.apis = Array.isArray(saved.apis) ? saved.apis.slice(-30) : [];
+    } catch (e) {}
+  }
+
+  function persistNow() {
+    try {
+      sessionStorage.setItem(SS_KEY, JSON.stringify({
+        at: Date.now(),
+        samples: allRecords().slice(0, 3000),
+        apis: CAP.slice(-30).map(function (c) {
+          return { method: c.method, url: c.url, body: c.body, status: c.status || null };
+        }),
+      }));
+    } catch (e) {
+      try {   // 配额满了就只留样本
+        sessionStorage.setItem(SS_KEY, JSON.stringify({ at: Date.now(), samples: allRecords().slice(0, 600), apis: [] }));
+      } catch (e2) {}
+    }
+  }
+
+  function persistSoon() {
+    if (persistTimer) return;
+    persistTimer = setTimeout(function () { persistTimer = null; persistNow(); }, 600);
+  }
+
+  restoreSaved();
+
   /* ---------------- 通用抽取（与服务端 prices.js 的 extractRecords 同逻辑） ------------- */
   var TITLE_KEY = /^(title|content|name|goods_?name|item_?name|desc|description|text|subject|rawContent)$/i;
   var PRICE_KEY = /(price|amount|money|fee|成交|售价|价格|标价)/i;
@@ -279,11 +320,26 @@
   /* ---------------- 对外 API ---------------- */
   function allRecords(opts) {
     var out = [];
+    var seen = {};
+    function key(r) {
+      return (r.spuId || (r.title + '|' + (r.elite || ''))) + '@' + r.price;
+    }
+    // 上个页面（搜索跳转前）抓到的先放进来，跳回来不用重抓
+    for (var r = 0; r < RESTORED.samples.length; r++) {
+      var s = RESTORED.samples[r];
+      var ks = key(s);
+      if (seen[ks]) continue;
+      seen[ks] = 1;
+      out.push(s);
+    }
     for (var i = 0; i < CAP.length; i++) {
       var j = safeParse(CAP[i].resp);
       if (!j) continue;
       var recs = extractRecords(j, opts || {});
       for (var k = 0; k < recs.length; k++) {
+        var kk = key(recs[k]);
+        if (seen[kk]) continue;
+        seen[kk] = 1;
         recs[k]._api = i;
         out.push(recs[k]);
       }
@@ -396,12 +452,12 @@
         ua: navigator.userAgent,
         cookie: document.cookie,
         tokens: tokens,
-        apis: CAP.map(function (c) {
+        apis: RESTORED.apis.concat(CAP.map(function (c) {
           return {
             method: c.method, url: c.url, headers: c.headers, body: c.body,
             status: c.status || null, count: c.count,
           };
-        }),
+        })),
         samples: list.map(function (r) {
           return {
             name: r.name || null,
@@ -457,11 +513,41 @@
       console.log('已清空捕获，继续在页面上操作即可。');
     },
 
-    captured: function () { return CAP; },
+    captured: function () { return RESTORED.apis.concat(CAP); },
+
+    // 有多少条原始记录（不打印、不筛选）—— 自动搜索用它判断「这次搜索到底抓到新东西没有」
+    count: function () { return allRecords().length; },
+
+    // 油猴脚本在 collector 就绪前会先兜住页面自己的早期请求（首屏 feed 就发生在
+    // 跨域拉本脚本的那几十毫秒里），就绪后从这里回放进来，避免首屏那批数据丢掉。
+    __ingest: function (list) {
+      if (!Array.isArray(list)) return 0;
+      for (var i = 0; i < list.length; i++) {
+        var r = list[i];
+        if (!r || !r.url) continue;
+        var rec = addCapture({
+          method: String(r.method || 'GET').toUpperCase(),
+          url: String(r.url),
+          headers: {},
+          body: r.body ? String(r.body) : '',
+          resp: '',
+          status: r.status || null,
+        });
+        if (!rec) continue;
+        if (r.resp && String(r.resp).length > String(rec.resp || '').length) rec.resp = String(r.resp);
+        if (r.status) rec.status = r.status;
+      }
+      persistSoon();
+      return allRecords().length;
+    },
   };
 
   window.__QD = API;
 
+  if (RESTORED.samples.length) {
+    console.log('%c[千岛采集器] 已恢复上个页面抓到的 ' + RESTORED.samples.length + ' 条（搜索跳页不会丢）',
+      'color:#2563eb;font-size:13px;font-weight:bold');
+  }
   console.log('%c[千岛采集器] 已启动', 'color:#2563eb;font-size:14px;font-weight:bold');
   console.log('现在请在页面上：切一下分类 / 往下滚几屏 / 搜一下「通行证」，让列表重新加载。');
   console.log('然后执行  __QD.samples()  看结果，再执行  __QD.copy()  复制。');
