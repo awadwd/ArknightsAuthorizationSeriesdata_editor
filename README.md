@@ -151,3 +151,106 @@ plaintext arknightstoolWorkspace/ ├── server/ # Node.js后端服务 │ �
 
 * GitHub 议题：[https://github.com/awadwd/ArknightsAuthorization_Series-mirror/issues](https://link.wtturl.cn/?target=https%3A%2F%2Fgithub.com%2Fawadwd%2FArknightsAuthorization_Series-mirror%2Fissues&scene=im&aid=497858&lang=zh "autolink")
 * GitCode 镜像议题：[https://gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/issues](https://link.wtturl.cn/?target=https%3A%2F%2Fgitcode.com%2Fhuangjinzhou1%2FArknightsAuthorization_Series%2Fissues&scene=im&aid=497858&lang=zh "autolink")
+
+---
+
+## 自动同步：为什么不生效，以及现在怎么修
+
+### 原来的问题
+
+旧实现的"自动同步"其实只挂在两个东西上：
+
+1. 配置页的「立即同步一次」——**要人点**；
+2. `.github/workflows/sync-knowcloud.yml` 的 `schedule: 0 * * * *`——理论上每小时跑。
+
+实际跑出来是这个样子（`gh run list` 实测）：
+
+```
+02:30 → 22:14 → 17:52 → 11:20 → 03:00 → 22:27 …   间隔 4~6 小时
+```
+
+GitHub Actions 的 `schedule` 在低活跃仓库上会被大幅推迟，再加上旧代码**每次同步都提一个 PR**（哪怕数据没变），
+于是"看起来同步成功、实际什么都没变"。结论：**只靠 Actions 的 cron 保证不了时效**。
+
+### 现在的三条通道
+
+| 通道 | 触发方式 | 特点 |
+| --- | --- | --- |
+| Cloudflare Cron（主） | `server/wrangler.toml` 的 `[triggers] crons = ["*/30 * * * *"]` | 平台级触发，最稳；每 30 分钟打一次 `/api/admin/sync` |
+| GitHub Actions（备） | 每 30 分钟 + 手动 dispatch | bot 直接改 `kc-data.js` 并 push，push 后可触发 Pages 部署钩子 |
+| 页面自愈（兜底） | 打开「配置管理」时若已过期 | 静默补跑一次，谁打开后台谁就把数据刷新 |
+
+### 需要配置的环境变量
+
+在 **Cloudflare Pages → Settings → Environment variables**（Production）里加：
+
+| 变量 | 作用 | 必需 |
+| --- | --- | --- |
+| `SYNC_TOKEN` | 机器触发口令。Worker cron / 任意外部 cron 带着它打 `/api/admin/sync` 就算 owner，不需要谁的 PAT | 是（不配就只剩手动+页面自愈） |
+| `SYNC_GITHUB_TOKEN` | 机器触发时用来推送仓库的 PAT（`repo` 权限）。不填则回落到 `GITHUB_TOKEN` | 是 |
+| `PAGES_DEPLOY_HOOK` | Pages 的 Deploy Hook URL。同步合并后立刻触发重建，避免"仓库更新了线上还是旧数据" | 强烈建议 |
+| `GITHUB_TOKEN` | 反馈读写、审核相关（原有） | 是 |
+
+Worker 侧（`cd server && wrangler secret put SYNC_TOKEN`）只需要 `SYNC_TOKEN`；
+`EDITOR_API_BASE` 已写在 `server/wrangler.toml`，指向 Pages 域名。
+
+配好后验证：
+
+```bash
+# 机器身份同步（不需要浏览器）
+curl -X POST https://<你的 pages 域名>/api/admin/sync \
+  -H "X-Sync-Token: $SYNC_TOKEN" -H "Content-Type: application/json" -d '{}'
+# 返回 status.results 里每张表的 行数 / 耗时 / 是否变更
+```
+
+同步行为的变化：**数据没变就不再提 PR**（返回 `changed:false`）；单表拉取失败会保留旧数据，不会把表清空。
+
+---
+
+## 数据表页（对齐知晓云的操作逻辑）
+
+导航「数据表」是照着知晓云控制台做的，用法一样：
+
+- 左边选表（带行数），右边表格；
+- 点「编辑」改一行（对象/数组字段用 JSON 编辑），「添加行」新增，「删除」删行，支持勾选批量删；
+- 搜索框过滤任意字段，分页 20/50/100，右上「列显示」控制展示哪些列；
+- **改动先攒着**，右上角显示「N 处待提交」，点一次「提交」把所有增删改合并成一个 PR；
+- 左下「对比线上」会拉一份知晓云当前数据，逐表标「一致 / 不同 / 失败」，可以一键"以线上覆盖本地"再提交。
+
+底层接口就是 `POST /api/admin/tables`，支持 `{ table, ops:[{op:'insert'|'update'|'delete', ...}] }`，
+同时兼容旧的 `{ table, rows }` / `{ kcData }`。
+
+---
+
+## 市价（千岛 → Box_Id.json 的 market_price）
+
+`Box_Id.json` 里每个干员是 `market_price: { ELITE1, ELITE2 }`。导航「市价」页负责把它自动化：
+
+1. **来源**三选一：
+   - `千岛行情`：需要填一个**抓包得到的接口地址**（endpoint / 请求头 / 请求体模板 / 字段映射）。
+     千岛没有公开 API，请求要带登录态 Cookie，所以这部分必须由你提供一次；
+   - `手工价表`：直接在配置里写 `{ 干员名: { ELITE1, ELITE2 } }`，永远可用；
+   - `导入`：把 JSON 数组或 `name,elite,price` 三列 CSV 粘进来，其它脚本产出的结果直接喂。
+2. **聚合**：同一干员+精英化取中位数，按 MAD 剔除离谱报价；样本数 < `minSamples` 不覆盖旧价；
+   只有单边价格时默认**不**用比例推算另一边（配置里 `deriveMissing` 打开才会）。
+3. **写回**：只改 `market_price`，走 PR（分支前缀 `prices/`），PR 描述里带涨跌清单。
+
+标题匹配：把「明日方舟 通行证 阿米娅 精二 出」这类商品标题，按干员名包含匹配 + 精一/精二识别，
+落到 `Box_Id.json` 里对应的 `characterN`。匹配不上的会记在返回的 `unmatched` 里，方便调映射。
+
+自动刷新：Worker cron 每 12 小时会调一次 `POST /api/prices?action=apply`（见 `server/worker.js` 的 `scheduled`）。
+
+---
+
+## 审核通过 → 直接提 PR
+
+审核页点「通过」不再是只改状态：
+
+1. 先 `dryRun` 叫后端把 `feedback.modifyData` 打进 `Box_Id.json`，返回逐字段 diff（`旧值 → 新值`）；
+2. 弹窗确认；确认后建分支 `review/<id>`、改文件、开 PR，并把 `prUrl` 写回 `feedback.json` 的 `reviewInfo`；
+3. PR 合并权限仍然在仓库管理员手里（不自动 merge）。
+
+`modifyData` 的 key 支持盒级字段（`type` / `replicate` / `retail_price`）也支持干员级嵌套路径
+（`character1.market_price.ELITE2`、`character3.hotcharacter`）；中文字段名会被映射到英文字段名，
+`已复刻/未复刻` 这类中文布尔值会转成数据里用的 `"true"/"false"`。目标仓库默认跟登录账号的源一致，
+也可以在请求里用 `target: 'github' | 'gitcode'` 指定。

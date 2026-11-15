@@ -16,6 +16,12 @@
         <a href="#" :class="{ active: view === 'review' }" @click.prevent="setView('review')" v-if="isAuthenticated">
           反馈审核
         </a>
+        <a href="#" :class="{ active: view === 'tables' }" @click.prevent="setView('tables')" v-if="isOwner">
+          数据表
+        </a>
+        <a href="#" :class="{ active: view === 'prices' }" @click.prevent="setView('prices')" v-if="isOwner">
+          市价
+        </a>
         <a href="#" :class="{ active: view === 'config' }" @click.prevent="setView('config')" v-if="isOwner">
           配置管理
         </a>
@@ -59,6 +65,12 @@
         :username="username || 'admin'"
       />
       
+      <!-- Data Table View（对齐知晓云操作逻辑） -->
+      <DataTable v-if="view === 'tables'" />
+
+      <!-- Price View -->
+      <PricePanel v-if="view === 'prices'" />
+
       <!-- Config View -->
       <AdminConfig v-if="view === 'config'" />
       
@@ -104,8 +116,9 @@
         </div>
       </div>
 
-      <!-- Editor View -->
-      <div v-else class="editor-section">
+      <!-- Editor View（显式判断：原来的 v-else 挂到了 About 上，
+           导致审核/配置页下面会同时渲染编辑器） -->
+      <div v-if="view === 'editor'" class="editor-section">
         <!-- Not Authenticated -->
         <div v-if="!isAuthenticated" class="auth-section">
           <h2>{{ t('auth.title') }}</h2>
@@ -643,6 +656,8 @@ import axios from 'axios'
 import { useI18n, t as translate, tm } from './i18n'
 import AdminReview from './components/AdminReview.vue'
 import AdminConfig from './components/AdminConfig.vue'
+import DataTable from './components/DataTable.vue'
+import PricePanel from './components/PricePanel.vue'
 import { getAdminConfig } from './api/config'
 
 // 使用相对路径（Cloudflare Pages Functions 同域）
@@ -667,6 +682,8 @@ export default {
   components: {
     AdminReview,
     AdminConfig,
+    DataTable,
+    PricePanel,
   },
 
   setup() {

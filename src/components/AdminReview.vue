@@ -168,6 +168,10 @@
           <p v-if="feedback.reviewInfo.reason">
             <strong>原因:</strong> {{ feedback.reviewInfo.reason }}
           </p>
+          <p v-if="feedback.reviewInfo.prUrl">
+            <strong>PR:</strong>
+            <a :href="feedback.reviewInfo.prUrl" target="_blank" rel="noopener">{{ feedback.reviewInfo.prUrl }}</a>
+          </p>
         </div>
       </div>
     </div>
@@ -189,6 +193,33 @@
       </div>
     </div>
 
+    <!-- 审核通过：改动预览 -->
+    <div v-if="showDiffModal" class="modal-overlay" @click.self="showDiffModal = false">
+      <div class="modal-content diff-modal">
+        <h3>确认改动并创建 PR</h3>
+        <p class="diff-sub">
+          盒号 <b>{{ diffCtx.feedback && diffCtx.feedback.boxId }}</b>
+          · 目标仓库 {{ diffCtx.target ? diffCtx.target.kind + ' / ' + diffCtx.target.base : '' }}
+        </p>
+        <div class="diff-list" v-if="diffCtx.diffs && diffCtx.diffs.length">
+          <div class="diff-row" v-for="(d, i) in diffCtx.diffs" :key="i">
+            <code>{{ d.path }}</code>
+            <span class="from">{{ d.before == null ? '（无）' : JSON.stringify(d.before) }}</span>
+            <span class="arrow">→</span>
+            <span class="to">{{ JSON.stringify(d.after) }}</span>
+          </div>
+        </div>
+        <div class="diff-list" v-else>这条反馈没有产生任何字段变化。</div>
+        <div v-if="approveError" class="save-error" style="margin-top:8px;">{{ approveError }}</div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="showDiffModal = false">取消</button>
+          <button class="btn btn-success" @click="confirmApprove" :disabled="approving || !(diffCtx.diffs && diffCtx.diffs.length)">
+            {{ approving ? '提交中…' : '确认并提 PR' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 图片预览 -->
     <div v-if="previewImageUrl" class="image-preview-modal" @click="previewImageUrl = ''">
       <img :src="previewImageUrl" />
@@ -197,6 +228,8 @@
 </template>
 
 <script>
+import axios from 'axios'
+
 export default {
   name: 'AdminReview',
   props: {
@@ -213,7 +246,11 @@ export default {
       rejectReason: '',
       currentFeedback: null,
       currentIndex: -1,
-      previewImageUrl: ''
+      previewImageUrl: '',
+      showDiffModal: false,
+      diffCtx: { feedback: null, diffs: [], target: null },
+      approving: false,
+      approveError: ''
     }
   },
   computed: {
@@ -313,37 +350,51 @@ export default {
       this.previewImageUrl = url
     },
 
-    // 通过审核
+    // 通过审核：先 dryRun 拿 diff 给审核人看，确认后才真正提 PR
     async approveFeedback(feedback, index) {
-      if (!confirm('确认通过此反馈？\n\n建议：审核通过后系统将创建Pull Request，由仓库管理员最终审核。')) {
-        return
-      }
-
+      if (this.approving) return
+      this.approving = true
+      this.approveError = ''
       try {
-        // TODO: 创建GitHub Pull Request
-        // 需要基于feedback.modifyData修改Box_Id.json，然后创建PR
-        alert('功能开发中：将通过创建Pull Request的方式更新数据。');
-        
-        // 临时方案：只更新状态为approved
-        const response = await fetch('/api/feedback-update', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            feedbackId: feedback.id,
-            status: 'approved'
-          })
-        });
-        
-        if (response.ok) {
-          feedback.status = 'approved';
-          alert('审核通过！');
-        } else {
-          const result = await response.json();
-          alert('操作失败: ' + result.error);
+        const { data } = await axios.post('/api/review/approve', { feedbackId: feedback.id, dryRun: true })
+        if (!data || !data.success) {
+          alert('无法自动生成改动：' + ((data && data.error) || '未知错误'))
+          return
         }
+        this.diffCtx = { feedback, diffs: data.diffs || [], target: data.target || null }
+        this.showDiffModal = true
       } catch (e) {
-        console.error('审核失败:', e)
-        alert('审核失败: ' + e.message)
+        const msg = (e.response && e.response.data && e.response.data.error) || e.message
+        alert('预览改动失败：' + msg)
+      } finally {
+        this.approving = false
+      }
+    },
+
+    async confirmApprove() {
+      const fb = this.diffCtx.feedback
+      if (!fb) return
+      this.approving = true
+      this.approveError = ''
+      try {
+        const { data } = await axios.post('/api/review/approve', { feedbackId: fb.id })
+        if (!data || !data.success) {
+          this.approveError = (data && data.error) || '提交失败'
+          return
+        }
+        fb.status = 'approved'
+        fb.reviewInfo = {
+          reviewer: this.username,
+          reviewTime: new Date().toISOString(),
+          prUrl: data.prUrl,
+          diffs: data.diffs
+        }
+        this.showDiffModal = false
+        if (data.prUrl) window.open(data.prUrl, '_blank')
+      } catch (e) {
+        this.approveError = (e.response && e.response.data && e.response.data.error) || e.message
+      } finally {
+        this.approving = false
       }
     },
 
@@ -690,6 +741,14 @@ export default {
 }
 
 /* 模态框 */
+.diff-modal { max-width: 620px; width: 92vw; }
+.diff-sub { font-size: 13px; color: #6b7280; margin: 4px 0 10px; }
+.diff-list { max-height: 340px; overflow: auto; border: 1px solid #eef0f2; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.diff-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed #f3f4f6; flex-wrap: wrap; }
+.diff-row code { color: #3730a3; background: #eef2ff; border-radius: 4px; padding: 1px 5px; }
+.diff-row .from { color: #b91c1c; text-decoration: line-through; }
+.diff-row .arrow { color: #9ca3af; }
+.diff-row .to { color: #047857; font-weight: 600; }
 .modal-overlay {
   position: fixed;
   top: 0;

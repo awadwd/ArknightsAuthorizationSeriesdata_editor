@@ -128,26 +128,68 @@
               </label>
             </div>
             <div class="form-group">
-              <label class="form-label">Cron 计划（每小时由 GitHub Actions 触发）</label>
-              <input class="form-input" v-model="config.autoSync.schedule" />
-              <span class="form-hint">默认 <code>0 * * * *</code>（每小时整点）。需仓库配置 <code>ADMIN_TOKEN</code> secret 与 GitHub Actions。</span>
+              <label class="form-label">同步间隔（分钟）</label>
+              <input class="form-input" type="number" min="5" v-model.number="config.autoSync.intervalMinutes" />
+              <span class="form-hint">定时任务（Cloudflare Cron / GitHub Actions）按这个间隔跑；改了记得保存。</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">超时判定（分钟）</label>
+              <input class="form-input" type="number" min="10" v-model.number="config.autoSync.staleMinutes" />
+              <span class="form-hint">超过这个时间没同步，打开本页会自动补跑一次。</span>
             </div>
           </div>
-          <div class="sync-status" v-if="syncStatus">
-            <div>最近同步：<strong>{{ formatTime(syncStatus.lastRunAt) }}</strong></div>
-            <div v-if="syncStatus.triggeredBy">触发者：{{ syncStatus.triggeredBy }}</div>
-            <div v-if="syncStatus.prUrl">PR：<a :href="syncStatus.prUrl" target="_blank" rel="noopener">{{ syncStatus.prUrl }}</a></div>
-            <div v-if="syncStatus.pushError" class="text-danger">推送错误：{{ syncStatus.pushError }}</div>
+
+          <div class="sync-health" v-if="syncStatus">
+            <div class="sync-health-row">
+              <span class="k">最近同步</span>
+              <strong>{{ formatTime(syncStatus.lastRunAt) }}</strong>
+              <span :class="['sync-tag', stale ? 'warn' : 'ok']">
+                {{ syncStatus.lastRunAt ? (stale ? '已过期 ' + ageMinutes + ' 分钟' : '正常') : '从未运行' }}
+              </span>
+            </div>
+            <div class="sync-health-row" v-if="syncStatus.trigger">触发方式：{{ syncStatus.trigger === 'scheduler' ? '定时任务' : '手动' }} · {{ syncStatus.triggeredBy }}</div>
+            <div class="sync-health-row" v-if="syncStatus.changedTables && syncStatus.changedTables.length">
+              变更表：<code>{{ syncStatus.changedTables.join(', ') }}</code>
+            </div>
+            <div class="sync-health-row" v-if="syncStatus.prUrl">
+              PR：<a :href="syncStatus.prUrl" target="_blank" rel="noopener">{{ syncStatus.prUrl }}</a>
+            </div>
+            <div class="sync-health-row" v-if="syncStatus.deploy && syncStatus.deploy.ok">部署钩子：已触发 Pages 重建</div>
+            <div class="sync-health-row" v-if="syncStatus.deploy && syncStatus.deploy.skipped">部署钩子：未配置（仓库更新后需等 Pages 自己重建）</div>
+            <div class="sync-health-row text-danger" v-if="syncStatus.pushError">推送错误：{{ syncStatus.pushError }}</div>
           </div>
+
+          <div class="sync-tables" v-if="syncStatus && syncStatus.results && syncStatus.results.length">
+            <div class="sync-tables-head">
+              <span>表</span><span>状态</span><span>行数</span><span>耗时</span>
+            </div>
+            <div class="sync-tables-row" v-for="r in syncStatus.results" :key="r.table">
+              <span>{{ r.table }}</span>
+              <span :class="r.status === 'ok' ? 'ok' : 'bad'">{{ r.status === 'ok' ? '成功' : '失败' }}</span>
+              <span>{{ r.count == null ? '保留旧数据' : r.count }}</span>
+              <span>{{ r.ms }}ms</span>
+            </div>
+          </div>
+
+          <div class="sync-scheduler">
+            定时触发：<span :class="scheduler.syncTokenConfigured ? 'ok' : 'bad'">{{ scheduler.syncTokenConfigured ? 'SYNC_TOKEN 已配置' : 'SYNC_TOKEN 未配置' }}</span>
+            ·
+            部署钩子：<span :class="scheduler.deployHookConfigured ? 'ok' : 'bad'">{{ scheduler.deployHookConfigured ? '已配置' : '未配置' }}</span>
+            <div class="form-hint" style="margin-top:6px;">
+              未配置 SYNC_TOKEN 时，只有打开本页/手动点「立即同步」才会同步——这正是之前"自动同步没效果"的原因。
+              配置方式见仓库 README 的「自动同步」章节。
+            </div>
+          </div>
+
           <div class="save-bar" style="margin-top:12px;">
-            <button class="btn btn-secondary" @click="manualSync" :disabled="syncing" type="button">
+            <button class="btn btn-secondary" @click="manualSync(false)" :disabled="syncing" type="button">
               {{ syncing ? '同步中...' : '立即同步一次' }}
+            </button>
+            <button class="btn btn-secondary" @click="manualSync(true)" :disabled="syncing" type="button">
+              强制同步（忽略变更检测）
             </button>
             <span v-if="syncMsg" class="badge badge-connected">{{ syncMsg }}</span>
             <span v-if="syncError" class="save-error">{{ syncError }}</span>
-          </div>
-          <div class="alert alert-info" style="margin-top:12px;">
-            自动同步需要：① 仓库 Secrets 配置 <code>ADMIN_TOKEN</code>（你的 GitHub PAT）；② 已启用 <code>.github/workflows/sync-knowcloud.yml</code>。
           </div>
         </div>
 
@@ -220,6 +262,10 @@ export default {
       syncing: false,
       syncMsg: '',
       syncError: '',
+      stale: false,
+      ageMinutes: null,
+      scheduler: { syncTokenConfigured: false, deployHookConfigured: false },
+      autoHealed: false,
       // 数据表
       tablesList: [],
       tableCounts: {},
@@ -244,6 +290,8 @@ export default {
       await this.load()
       await this.loadSyncStatus()
       await this.loadTables()
+      // 打开本页时如果已经超过同步间隔，自动补跑一次（不依赖任何外部定时器）
+      this.autoHeal()
     }
   },
   watch: {
@@ -266,11 +314,15 @@ export default {
         pr: { defaultBaseBranch: 'dev', ...(raw.pr || {}) },
         feedback: { storagePath: 'feedback.json', branch: 'master', ...(raw.feedback || {}) },
         autoSync: {
-          enabled: false,
-          schedule: '0 * * * *',
+          enabled: true,
+          intervalMinutes: 30,
+          staleMinutes: 90,
+          schedule: '*/30 * * * *',
           source: 'knowcloud',
-          tables: ['Version', 'choearth_notice', 'more_notice', 'questionnaire', 'SearchWord_Version', 'Guess_Version', 'AiToolsConfig'],
+          tables: ['Version', 'choearth_notice', 'more_notice', 'questionnaire', 'SearchWord_Version', 'Guess_Version', 'AiToolsConfig', '224660'],
           lastRunAt: null,
+          lastTrigger: null,
+          lastChanged: null,
           lastResult: null,
           ...(raw.autoSync || {}),
         },
@@ -302,19 +354,53 @@ export default {
     async loadSyncStatus() {
       try {
         const { data } = await axios.get('/api/admin/sync-status')
-        if (data && data.success) this.syncStatus = data.status
+        if (data && data.success) {
+          this.syncStatus = data.status || null
+          this.stale = !!data.stale
+          this.ageMinutes = data.ageMinutes
+          this.scheduler = data.scheduler || this.scheduler
+          if (data.autoSync && this.config) {
+            this.config.autoSync.lastRunAt = data.autoSync.lastRunAt
+            this.config.autoSync.lastTrigger = data.autoSync.lastTrigger
+          }
+        }
       } catch (e) {}
     },
-    async manualSync() {
+    // 自愈：页面打开时若数据已过期，静默补一次同步。
+    // 作用：即使定时任务被平台限流/停用，只要有人打开后台，数据就不会一直旧着。
+    async autoHeal() {
+      if (this.autoHealed) return
+      this.autoHealed = true
+      if (!this.config || !this.config.autoSync || !this.config.autoSync.enabled) return
+      if (!this.stale) return
+      try {
+        const { data } = await axios.post('/api/admin/sync', {})
+        if (data && data.success) {
+          this.syncStatus = data.status
+          this.stale = false
+          this.syncMsg = data.status.changed ? '已自动补同步（有更新）' : '已自动补同步（无变化）'
+          setTimeout(() => { this.syncMsg = '' }, 4000)
+          await this.loadSyncStatus()
+          await this.loadTables()
+        }
+      } catch (e) { /* 静默失败，不影响页面 */ }
+    },
+    async manualSync(force) {
       this.syncing = true
       this.syncMsg = ''
       this.syncError = ''
       try {
-        const { data } = await axios.post('/api/admin/sync')
+        const { data } = await axios.post('/api/admin/sync', { force: !!force })
         if (data && data.success) {
-          this.syncMsg = '同步完成'
-          this.syncStatus = data.status
-          setTimeout(() => { this.syncMsg = '' }, 3000)
+          const st = data.status || {}
+          this.syncStatus = st
+          this.stale = false
+          if (st.pushError) this.syncError = st.pushError
+          else if (st.changed) this.syncMsg = '同步完成，已更新 ' + (st.changedTables || []).length + ' 张表'
+          else this.syncMsg = '同步完成，数据无变化'
+          setTimeout(() => { this.syncMsg = '' }, 4000)
+          await this.loadSyncStatus()
+          await this.loadTables()
         } else {
           this.syncError = (data && data.error) || '同步失败'
         }
@@ -488,6 +574,19 @@ export default {
   margin-top: 24px;
 }
 
+.sync-health { margin-top: 12px; font-size: 13px; }
+.sync-health-row { padding: 3px 0; color: #374151; }
+.sync-health-row .k { color: #6b7280; margin-right: 8px; }
+.sync-tag { margin-left: 8px; font-size: 11px; padding: 1px 8px; border-radius: 999px; }
+.sync-tag.ok, .ok { color: #047857; }
+.sync-tag.ok { background: #ecfdf5; }
+.sync-tag.warn { background: #fef3c7; color: #b45309; }
+.bad { color: #b91c1c; }
+.sync-tables { margin-top: 12px; border: 1px solid #eef0f2; border-radius: 8px; overflow: hidden; font-size: 12px; }
+.sync-tables-head, .sync-tables-row { display: grid; grid-template-columns: 1.6fr .8fr .8fr .8fr; padding: 6px 10px; gap: 6px; }
+.sync-tables-head { background: #fafbfc; font-weight: 600; color: #374151; }
+.sync-tables-row { border-top: 1px solid #f3f4f6; }
+.sync-scheduler { margin-top: 12px; font-size: 13px; color: #374151; }
 .sync-status {
   margin-top: 12px;
   font-size: 13px;

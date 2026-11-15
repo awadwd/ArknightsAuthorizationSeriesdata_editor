@@ -1,9 +1,22 @@
 name: Sync KnowCloud Data (Direct)
 
+# 这条 workflow 是"兜底"通道：不依赖任何人的浏览器，直接把知晓云数据落进仓库。
+# 真正的定时主力是 Cloudflare Worker 的 cron（见 server/wrangler.toml 的 [triggers]），
+# 因为 GitHub Actions 的 schedule 在低活跃仓库上会被推迟到 4~6 小时一次。
+#
+# 相关 secret（可选，不配也能跑）：
+#   CF_DEPLOY_HOOK —— Cloudflare Pages 的 Deploy Hook URL。
+#                     配了它，push 之后会立刻触发 Pages 重建，
+#                     避免"仓库已更新、线上还是旧数据"。
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
+
+# 同一时间只跑一个，避免两轮同时写同一个文件
+concurrency:
+  group: sync-knowcloud
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -51,3 +64,10 @@ jobs:
           git commit -m "chore: sync kc-data from KnowCloud $TIMESTAMP"
           git push
           echo "Pushed. CF Pages will rebuild automatically."
+
+      # 显式触发 Pages 重建：有些项目的 Pages 并不监听 bot 的 push，
+      # 或者生产分支不是 master，这一步能把"已部署但没重建"的坑堵住。
+      - name: Trigger Pages deploy hook
+        if: steps.diff.outputs.changed == 'true' && secrets.CF_DEPLOY_HOOK != ''
+        run: |
+          curl -sS -X POST "${{ secrets.CF_DEPLOY_HOOK }}" -o /dev/null -w "deploy hook: %{http_code}\n"

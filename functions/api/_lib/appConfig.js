@@ -30,12 +30,43 @@ export const DEFAULT_CONFIG = {
     storagePath: 'feedback.json',
     branch: 'master',
   },
-  // 自动同步：每小时从知晓云拉数据表 -> 重写 kc-data.js
+  // 自动同步：定时从知晓云拉数据表 -> 重写 kc-data.js
+  // 频率以 intervalMinutes 为准（Cron/Workflow 都读它），schedule 只作展示
   autoSync: {
-    enabled: false,
-    schedule: '0 * * * *',
+    enabled: true,
+    intervalMinutes: 30,
+    staleMinutes: 90,
+    schedule: '*/30 * * * *',
     source: 'knowcloud',
     tables: ['Version', 'choearth_notice', 'more_notice', 'questionnaire', 'SearchWord_Version', 'Guess_Version', 'AiToolsConfig', '224660'],
+    lastRunAt: null,
+    lastTrigger: null,
+    lastChanged: null,
+    lastResult: null,
+  },
+  // 市价：可插拔数据源（千岛 / 手工 / 导入），聚合后写回 Box_Id.json 的
+  // characterN.market_price.{ELITE1,ELITE2}
+  prices: {
+    enabled: true,
+    provider: 'qiandao',          // qiandao | manual | import
+    autoRefresh: true,
+    refreshHours: 12,
+    minSamples: 3,                 // 少于这个样本数不覆盖旧价
+    outlierMad: 3,                 // 中位数绝对偏差倍数，超过视为异常报价
+    elite1Ratio: 0.72,             // 只有综合价时，精一按精二的这个比例折算（需 deriveMissing）
+    deriveMissing: false,          // 是否允许用比例推算缺的精英化价格（默认关，避免凭空改价）
+    // 千岛抓取端点（抓包得到，留空则只能用手工/导入）
+    qiandao: {
+      endpoint: '',
+      method: 'POST',
+      headers: {},
+      body: '',
+      // 返回值里怎么取：items 指向数组，其余是数组元素的字段路径
+      mapping: { items: 'data.list', name: 'title', elite: 'elite', price: 'price', time: 'updatedAt' },
+      // 关键词模板，{name} 会被替换成干员名
+      keyword: '明日方舟 通行证 {name}',
+    },
+    manual: {},                    // { 干员名: { ELITE1: 100, ELITE2: 112 } }
     lastRunAt: null,
     lastResult: null,
   },
