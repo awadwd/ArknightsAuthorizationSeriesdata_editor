@@ -51,22 +51,42 @@ export const DEFAULT_CONFIG = {
     provider: 'qiandao',          // qiandao | manual | import
     autoRefresh: true,
     refreshHours: 12,
-    minSamples: 3,                 // 少于这个样本数不覆盖旧价
+    minSamples: 1,                 // 少于这个样本数不覆盖旧价（SPU 报价本身是权威值，1 就够；
+                                  // 若走「帖子正文解析」建议调到 3 以上）
     outlierMad: 3,                 // 中位数绝对偏差倍数，超过视为异常报价
     elite1Ratio: 0.72,             // 只有综合价时，精一按精二的这个比例折算（需 deriveMissing）
     deriveMissing: false,          // 是否允许用比例推算缺的精英化价格（默认关，避免凭空改价）
-    // 千岛抓取端点（抓包得到，留空则只能用手工/导入）
+    requirePassKeyword: true,      // 只认标题里带「通行证」的记录，过滤掉同岛的其他周边帖
+    // 千岛：主力是「浏览器控制台采集」（见 public/qiandao-collector.js），
+    // endpoint 那套只在确实有稳定公开接口时才有用。
     qiandao: {
-      endpoint: '',
-      method: 'POST',
+      islandId: '300569',          // 明日方舟岛
+      islandName: '明日方舟岛',
+      // 实测可用：POST/GET https://api.qiandao.com/gactus/posts/by-tag-v4（需要带 acw_sc__v2/v3）
+      endpoint: 'https://api.qiandao.com/gactus/posts/by-tag-v4',
+      method: 'GET',
       headers: {},
       body: '',
+      // 价格来源：strikePrice=市价（成交/划价）｜minOnlinePrice=最低在售
+      priceField: 'strikePrice',
+      // 只取某一弹，例如「通行认证56.0」；留空=全部系列混在一起算
+      seriesFilter: '',
       // 返回值里怎么取：items 指向数组，其余是数组元素的字段路径
-      mapping: { items: 'data.list', name: 'title', elite: 'elite', price: 'price', time: 'updatedAt' },
+      mapping: { items: 'data.posts', name: 'title', elite: 'elite', price: 'price', time: 'updatedAt' },
       // 关键词模板，{name} 会被替换成干员名
       keyword: '明日方舟 通行证 {name}',
     },
     manual: {},                    // { 干员名: { ELITE1: 100, ELITE2: 112 } }
+    // 抓取任务：慢速分页 + 退避等待 + 断点续跑 + 一月一轮
+    crawl: {
+      enabled: true,
+      refreshDays: 30,             // 一轮抓完 30 天内不再自动重开
+      maxPagesPerRun: 3,           // 每次 cron 醒来最多抓几页
+      delayMs: 3000,               // 页间隔；撞限流会自动翻倍（有上限）
+      maxDelayMs: 30000,
+      backoffMinutes: [15, 25, 40, 120, 720],  // 连续失败后的等待阶梯（前几档还在 cookie 寿命内）
+      maxPages: 60,                // 翻页安全上限
+    },
     lastRunAt: null,
     lastResult: null,
   },
