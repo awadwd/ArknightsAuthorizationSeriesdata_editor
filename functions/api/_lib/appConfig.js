@@ -77,6 +77,16 @@ export const DEFAULT_CONFIG = {
       keyword: '明日方舟 通行证 {name}',
     },
     manual: {},                    // { 干员名: { ELITE1: 100, ELITE2: 112 } }
+    // 抓取任务：慢速分页 + 退避等待 + 断点续跑 + 一月一轮
+    crawl: {
+      enabled: true,
+      refreshDays: 30,             // 一轮抓完 30 天内不再自动重开
+      maxPagesPerRun: 3,           // 每次 cron 醒来最多抓几页
+      delayMs: 3000,               // 页间隔；撞限流会自动翻倍（有上限）
+      maxDelayMs: 30000,
+      backoffMinutes: [15, 25, 40, 120, 720],  // 连续失败后的等待阶梯（前几档还在 cookie 寿命内）
+      maxPages: 60,                // 翻页安全上限
+    },
     lastRunAt: null,
     lastResult: null,
   },

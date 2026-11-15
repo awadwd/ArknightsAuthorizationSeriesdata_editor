@@ -21,6 +21,7 @@ import {
   resolveSamples, filterRecords, extractRecords, eliteFromTitle,
 } from './_lib/prices.js';
 import { saveSession, getSession, clearSession, sessionStatus, qdRequest, pickReplayApis } from './_lib/qiandao.js';
+import { getJob, saveJob, resetJob, runStep, jobSummary } from './_lib/crawl.js';
 
 function json(data, status) {
   return new Response(JSON.stringify(data), { status: status || 200, headers: syncCors('GET, POST, OPTIONS') });
@@ -50,6 +51,42 @@ function matrixOf(boxes) {
     }
   }
   return matrix;
+}
+
+// 用抓取任务攒下来的记录（而不是现抓一次）算样本
+async function fromCrawl(env, cfg, boxes, body) {
+  const job = await getJob(env);
+  if (!job || !(job.records || []).length) {
+    return {
+      provider: 'crawl', samples: [], source: 'crawl',
+      error: '抓取任务还没有数据',
+      hint: '在「自动抓取」里点「立即继续」，等它至少抓完一页再回来。',
+    };
+  }
+  const pcfg = cfg.prices || {};
+  const index = buildNameIndex(boxes);
+  const requirePass = body && body.requirePassKeyword != null
+    ? !!body.requirePassKeyword
+    : pcfg.requirePassKeyword !== false;
+  let picked = filterRecords(job.records, { requirePassKeyword: requirePass, requireElite: true });
+  let relaxed = false;
+  if (!picked.length) {
+    picked = filterRecords(job.records, { requirePassKeyword: false, requireElite: true });
+    relaxed = picked.length > 0;
+  }
+  const resolved = resolveSamples(picked, index);
+  return {
+    provider: 'qiandao',
+    source: 'crawl',
+    samples: resolved.samples,
+    unmatched: resolved.unmatched,
+    unmatchedCount: resolved.unmatchedCount,
+    recordsCount: job.records.length,
+    filteredCount: picked.length,
+    relaxedKeyword: relaxed,
+    crawlPhase: job.phase,
+    crawlPage: job.page,
+  };
 }
 
 async function collect(cfg, boxes, body, env) {
@@ -141,6 +178,7 @@ export async function onRequestGet(context) {
   const cfg = await getAppConfig(context.env);
   const url = new URL(context.request.url);
   const session = await getSession(context.env);
+  const job = await getJob(context.env);
   try {
     const { target, ref, boxes } = await loadBoxes(cfg, auth.token, auth.source, url.searchParams.get('target'), url.searchParams.get('base'));
     const pcfg = cfg.prices || {};
@@ -150,6 +188,7 @@ export async function onRequestGet(context) {
       count: boxes.length,
       matrix: matrixOf(boxes),
       session: sessionStatus(session),
+      crawl: jobSummary(job, pcfg),
       prices: {
         enabled: !!pcfg.enabled,
         provider: pcfg.provider || 'manual',
@@ -247,6 +286,26 @@ export async function onRequestPost(context) {
     return json({ success: ok, ok, session: sessionStatus(s), results }, 200);
   }
 
+  // ── 抓取任务：慢速分页 + 退避 + 断点续跑（cron 与手动共用）─────────────────
+  if (action === 'crawl-step') {
+    const r = await runStep(env, cfg.prices, {
+      force: !!body.force,
+      maxPages: body.maxPages,
+      alwaysPage: !!body.alwaysPage,
+    });
+    return json({
+      ...r,
+      crawl: jobSummary(r.job, cfg.prices),
+      session: sessionStatus(await getSession(env)),
+    }, r.ok || r.skipped ? 200 : 200);
+  }
+
+  if (action === 'crawl-reset') {
+    if (machineAuth && machineAuth.machine) return json({ success: false, error: '机器账号不能重置任务' }, 403);
+    await resetJob(env);
+    return json({ success: true, crawl: jobSummary(null, cfg.prices) });
+  }
+
   // 只改配置，不动数据仓库
   if (action === 'save-config') {
     if (machineAuth && machineAuth.machine) return json({ success: false, error: '机器账号不能改配置' }, 403);
@@ -274,7 +333,8 @@ export async function onRequestPost(context) {
   }
   const { boxes, file, target, ref } = loaded;
 
-  const got = await collect(cfg, boxes, body, env);
+  const isCrawl = action === 'crawl-apply' || action === 'crawl-preview';
+  const got = isCrawl ? await fromCrawl(env, cfg, boxes, body) : await collect(cfg, boxes, body, env);
   if (!got.samples.length) {
     return json({
       success: false,
@@ -307,6 +367,8 @@ export async function onRequestPost(context) {
     provider: got.provider,
     source: got.source || null,
     stale: !!got.stale,
+    crawlPhase: got.crawlPhase || null,
+    crawlPage: got.crawlPage == null ? null : got.crawlPage,
     samples: got.samples.length,
     recordsCount: got.recordsCount || got.samples.length,
     filteredCount: got.filteredCount || got.samples.length,
@@ -322,12 +384,12 @@ export async function onRequestPost(context) {
     target: { kind: target.kind, owner: target.owner, repo: target.repo, base: ref },
   };
 
-  if (action === 'preview' || action === 'samples' || action === 'manual') {
+  if (action === 'preview' || action === 'samples' || action === 'manual' || action === 'crawl-preview') {
     // samples/manual 只用于预览，写回前需要显式 apply
     return json({ success: true, ...summary, list: diffs.slice(0, 300) });
   }
 
-  if (action !== 'apply') return json({ success: false, error: '未知 action: ' + action }, 400);
+  if (action !== 'apply' && action !== 'crawl-apply') return json({ success: false, error: '未知 action: ' + action }, 400);
 
   if (!diffs.length) {
     return json({ success: true, ...summary, changed: false, message: '市价没有变化，未创建 PR' });
@@ -341,6 +403,12 @@ export async function onRequestPost(context) {
         prices: Object.assign({}, cfg.prices || {}, { lastRunAt: new Date().toISOString(), lastResult: { ...summary, prUrl: pr.url, count: diffs.length } }),
       }));
     } catch (e) {}
+    if (isCrawl) {
+      try {
+        const job = await getJob(env);
+        if (job) { job.appliedAt = new Date().toISOString(); await saveJob(env, job); }
+      } catch (e) {}
+    }
     return json({ success: true, ...summary, changed: true, prUrl: pr.url, prNumber: pr.number });
   } catch (e) {
     return json({ success: false, error: e.message, ...summary }, 500);

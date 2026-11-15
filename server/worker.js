@@ -38,15 +38,13 @@ async function callEditor(env, path, body) {
 export default {
   async scheduled(event, env, ctx) {
     const cron = (event && event.cron) || '';
-    const hour = new Date().getUTCHours();
     const jobs = [];
 
     jobs.push(callEditor(env, '/api/admin/sync', {}));
 
-    // 市价：默认每 12 小时刷一次（0 点和 12 点 UTC），避免把行情接口打得太勤
-    if (hour % 12 === 0) {
-      jobs.push(callEditor(env, '/api/prices?action=apply', {}));
-    }
+    // 市价：一轮抓取按月算，cron 每次醒来（30 分钟）只问一句「现在该继续吗」。
+    // 该继续就跑几页；撞到千岛限流会自动退避、记下 nextRunAt，下个周期接着抓剩下的。
+    jobs.push(callEditor(env, '/api/prices?action=crawl-step', {}));
 
     const results = await Promise.all(jobs);
     console.log('cron', cron, JSON.stringify(results).slice(0, 800));

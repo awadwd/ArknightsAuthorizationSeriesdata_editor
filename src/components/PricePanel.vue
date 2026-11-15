@@ -86,6 +86,42 @@
       </div>
 
       <div class="panel">
+        <h3 class="panel-title">自动抓取</h3>
+        <p class="form-hint" style="margin:0 0 12px;">
+          行情一个月更新一次就够，所以不追求一次抓完：每次只抓几页、页间隔几秒，
+          撞到千岛「手速太快」就自动降速并退避，<b>进度存着</b>，下个周期接着抓剩下的。
+          cron 每 30 分钟醒一次问一句「现在该继续吗」。
+        </p>
+
+        <div class="qd-grid">
+          <div class="qd-kv"><span>状态</span><b :class="'qd-phase ' + crawlPhaseClass">{{ crawlPhaseLabel }}</b></div>
+          <div class="qd-kv"><span>已抓商品</span><b>{{ crawl.records || 0 }}</b></div>
+          <div class="qd-kv"><span>覆盖干员</span><b>{{ crawl.characters || 0 }}</b></div>
+          <div class="qd-kv"><span>翻到第几页</span><b>{{ crawl.page || 0 }}</b></div>
+          <div class="qd-kv"><span>页间隔</span><b>{{ crawl.delayMs ? (crawl.delayMs / 1000) + 's' : '—' }}</b></div>
+          <div class="qd-kv"><span>下次可继续</span><b>{{ nextRunLabel }}</b></div>
+        </div>
+
+        <div v-if="crawl.present && crawl.series && crawl.series.length" class="form-hint" style="margin-top:6px;">
+          涉及系列（{{ crawl.seriesCount }}）：{{ crawl.series.join('、') }}{{ crawl.seriesCount > crawl.series.length ? ' …' : '' }}
+          <template v-if="!form.seriesFilter && crawl.seriesCount > 1">　⚠️ 多弹价格混在一起算，建议在上面「只取某一弹」里钉死一个</template>
+        </div>
+        <div v-if="crawl.lastError" class="pr-alert info" style="margin-top:10px;">{{ crawl.reason }}：{{ crawl.lastError }}</div>
+        <div v-else-if="crawl.note" class="pr-alert info" style="margin-top:10px;">{{ crawl.note }}</div>
+        <div v-else-if="crawl.present" class="form-hint" style="margin-top:8px;">{{ crawl.reason }}</div>
+
+        <div class="pr-bar">
+          <button class="btn btn-primary" @click="crawlStep()" :disabled="crawlBusy">
+            {{ crawlBusy ? '抓取中…' : (crawl.phase === 'done' ? '再抓一轮（忽略月周期）' : '立即继续抓取') }}
+          </button>
+          <button class="btn btn-secondary" @click="previewCrawl" :disabled="crawlBusy || !crawl.records">
+            用它算价并预览
+          </button>
+          <button class="btn btn-secondary" @click="crawlReset" :disabled="crawlBusy || !crawl.present">重置任务</button>
+        </div>
+      </div>
+
+      <div class="panel">
         <h3 class="panel-title">数据源</h3>
         <div class="form-row">
           <div class="form-group">
@@ -300,6 +336,9 @@ export default {
       importText: '',
       session: { present: false },
       sessionDetected: null,
+      crawl: { present: false },
+      crawlBusy: false,
+      previewFromCrawl: false,
       bundleText: '',
       savingSession: false,
       testing: false,
@@ -333,8 +372,37 @@ export default {
       const s = this.summary && this.summary.source
       if (s === 'session-replay') return '会话重放'
       if (s === 'session-cache') return '会话快照'
+      if (s === 'crawl') return '抓取任务'
       if (s === 'endpoint') return '手填接口'
       return (this.summary && this.summary.provider) || '—'
+    },
+    crawlPhaseLabel() {
+      const c = this.crawl || {}
+      if (!c.present) return '还没有任务'
+      if (c.phase === 'done') return c.appliedAt ? '已完成并写回' : '抓取完成'
+      if (c.phase === 'cooldown') return '退避中（等限流过去）'
+      if (c.phase === 'blocked') return '需要重新抓 cookie'
+      if (c.phase === 'running') return '抓取中'
+      return '待开始'
+    },
+    crawlPhaseClass() {
+      const p = (this.crawl || {}).phase
+      if (p === 'done') return 'ok'
+      if (p === 'cooldown') return 'warn'
+      if (p === 'blocked') return 'err'
+      return ''
+    },
+    nextRunLabel() {
+      const c = this.crawl || {}
+      if (!c.present) return '—'
+      if (c.phase === 'cooldown' && c.nextRunInMinutes != null) return c.nextRunInMinutes + ' 分钟后'
+      if (c.phase === 'done' && c.finishedAt) {
+        const days = Math.floor((Date.now() - Date.parse(c.finishedAt)) / 86400000)
+        const left = (c.refreshDays || 30) - days
+        return left > 0 ? `${left} 天后（月周期）` : '随时'
+      }
+      if (c.ready) return '现在'
+      return '—'
     },
     filteredMatrix() {
       const k = this.matrixFilter.trim().toLowerCase()
@@ -358,6 +426,7 @@ export default {
         if (!data || !data.success) throw new Error((data && data.error) || '读取失败')
         this.matrix = data.matrix || []
         this.session = (data.session && data.session.present) ? data.session : { present: false }
+        this.crawl = data.crawl || { present: false }
         const p = data.prices || {}
         this.islandId = p.islandId || '300569'
         this.form.provider = p.provider || 'manual'
@@ -450,6 +519,62 @@ export default {
         this.testing = false
       }
     },
+    async crawlStep() {
+      this.crawlBusy = true
+      this.error = ''
+      this.notice = ''
+      try {
+        const { data } = await axios.post('/api/prices?action=crawl-step', { force: true })
+        if (data.crawl) this.crawl = data.crawl
+        if (data.ok === false && data.paused) {
+          this.error = `${data.error}　→ 已暂停，${data.waitMinutes} 分钟后（或下次 cron）接着抓第 ${data.page} 页`
+        } else if (data.skipped) {
+          this.notice = data.reason || '现在不需要抓'
+        } else {
+          this.notice = `本轮抓了 ${data.pages} 页、新增 ${data.added} 条，累计 ${data.records} 个商品`
+            + (data.crawl && data.crawl.note ? '。' + data.crawl.note : '')
+        }
+      } catch (e) {
+        this.error = '抓取失败：' + ((e.response && e.response.data && e.response.data.error) || e.message)
+      } finally {
+        this.crawlBusy = false
+      }
+    },
+    async crawlReset() {
+      if (!confirm('重置抓取任务？已攒下的记录会一起清掉（不会改动 Box_Id.json）。')) return
+      try {
+        const { data } = await axios.post('/api/prices?action=crawl-reset', {})
+        this.crawl = data.crawl || { present: false }
+        this.notice = '任务已重置'
+      } catch (e) {
+        this.error = '重置失败：' + e.message
+      }
+    },
+    async previewCrawl() {
+      this.loading = true
+      this.error = ''
+      this.notice = ''
+      this.hint = ''
+      this.diffs = []
+      this.summary = null
+      try {
+        const { data } = await axios.post('/api/prices?action=crawl-preview', this.payloadBase())
+        if (!data) throw new Error('无返回')
+        if (!data.success) {
+          this.error = data.error || '算价失败'
+          this.hint = data.hint || ''
+          return
+        }
+        this.summary = data
+        this.diffs = data.list || []
+        this.previewFromCrawl = true
+        this.notice = this.diffs.length ? '预览完成，确认后点「应用」提 PR' : '价格没有变化'
+      } catch (e) {
+        this.error = '算价失败：' + ((e.response && e.response.data && e.response.data.error) || e.message)
+      } finally {
+        this.loading = false
+      }
+    },
     async clearSession() {
       if (!confirm('清除已保存的千岛会话？之后需要重新抓一次。')) return
       try {
@@ -534,6 +659,7 @@ export default {
       this.hint = ''
       this.diffs = []
       this.summary = null
+      this.previewFromCrawl = false
       try {
         const body = this.payloadBase()
         if (this.form.provider === 'import') {
@@ -559,20 +685,22 @@ export default {
     },
     async apply() {
       if (!this.diffs.length) return
+      const fromCrawl = this.previewFromCrawl
       if (!confirm('将把 ' + this.diffs.length + ' 处市价改动写回 Box_Id.json 并创建 PR，继续？')) return
       this.loading = true
       this.error = ''
       this.prUrl = ''
       try {
         const body = this.payloadBase()
-        if (this.form.provider === 'import') {
+        if (!fromCrawl && this.form.provider === 'import') {
           const samples = this.parsedSamples()
           if (samples && samples.length) body.samples = samples
         }
-        const { data } = await axios.post('/api/prices?action=apply', body)
+        const { data } = await axios.post('/api/prices?action=' + (fromCrawl ? 'crawl-apply' : 'apply'), body)
         if (!data || !data.success) throw new Error((data && data.error) || '应用失败')
         this.prUrl = data.prUrl || ''
         this.notice = data.changed === false ? '价格没有变化，未创建 PR' : '已创建 PR'
+        this.previewFromCrawl = false
         await this.load()
       } catch (e) {
         this.error = '应用失败：' + ((e.response && e.response.data && e.response.data.error) || e.message)
@@ -647,4 +775,13 @@ export default {
 .qd-preview > div { display: flex; gap: 8px; align-items: baseline; }
 .qd-price { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #b45309; min-width: 60px; }
 .qd-title { color: #6b7280; font-size: 12px; }
+
+/* 自动抓取 */
+.qd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.qd-kv { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; background: #f8fafc; border: 1px solid #eef1f5; }
+.qd-kv span { font-size: 11px; color: #6b7280; }
+.qd-kv b { font-size: 14px; color: #111827; }
+.qd-phase.ok { color: #047857; }
+.qd-phase.warn { color: #b45309; }
+.qd-phase.err { color: #b91c1c; }
 </style>
