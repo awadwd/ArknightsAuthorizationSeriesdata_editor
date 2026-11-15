@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         千岛行情采集 → 通行证工具编辑器
 // @namespace    https://github.com/awadwd/ArknightsAuthorizationSeriesdata_editor
-// @version      1.0.0
+// @version      1.1.0
 // @description  在千岛（qiandao.com）页面里自动收集明日方舟通行证的市价，一键复制或直接上传到编辑器，省掉 F12 粘贴
 // @author       awadwd
 // @match        https://qiandao.com/*
@@ -96,7 +96,7 @@
     '.qd-field input{width:100%;border:1px solid #dbe2ea;border-radius:8px;padding:5px 7px;font-size:12px;color:#0f172a;background:#fff;}',
     '.qd-field select{width:100%;border:1px solid #dbe2ea;border-radius:8px;padding:5px 7px;font-size:12px;color:#0f172a;background:#fff;}',
     '.qd-field input:focus,.qd-field select:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.12);}',
-    '#qd-msg{font-size:11px;line-height:1.5;color:#64748b;white-space:pre-wrap;word-break:break-all;max-height:88px;overflow:auto;}',
+    '#qd-msg{font-size:11px;line-height:1.5;color:#64748b;white-space:pre-wrap;word-break:break-all;max-height:168px;overflow:auto;}',
     '#qd-msg.ok{color:#047857;}',
     '#qd-msg.err{color:#b91c1c;}',
     '#qd-msg.warn{color:#b45309;}',
@@ -136,6 +136,7 @@
       '    <div id="qd-msg">滚动或切一下分类，页面的列表请求会被自动抄下来。</div>',
       '    <div class="qd-row" style="margin-top:8px;">',
       '      <button class="qd-btn" data-act="copy">复制 JSON</button>',
+      '      <button class="qd-btn" data-act="probe">检查通道</button>',
       '      <button class="qd-btn" data-act="clear">清空</button>',
       '    </div>',
       '    <div class="qd-sep"></div>',
@@ -178,6 +179,7 @@
       else if (act === 'roll') doRoll();
       else if (act === 'autosearch') doAutoSearch();
       else if (act === 'stopsearch') doStopSearch();
+      else if (act === 'probe') doProbe();
     });
 
     el.base.addEventListener('change', function () {
@@ -201,6 +203,13 @@
     }
 
     setInterval(refreshCount, 1500);
+
+    if (looksLocal(state.base)) {
+      state.open = true;
+      wrap.classList.add('open');
+      say('「编辑器地址」指向本机服务（' + state.base + '），这台地址上没有 /api/prices，上传一定失败。\n'
+        + '改成 ' + DEFAULT_BASE + ' 或你自己线上部署的地址。', 'warn');
+    }
   }
 
   function say(text, kind) {
@@ -254,6 +263,69 @@
     refreshCount();
   }
 
+  /* ---------------- 上传通道诊断 ----------------
+   * 「上传失败：Unexpected token '<'」只有一个含义：这个地址回的是一张网页，不是接口。
+   * 最常见的是「编辑器地址」填成了本机 dev 服务（vite / node 没有 Pages Functions），
+   * 直接把它翻成人话，别让人对着 JSON.parse 的报错猜。
+   */
+  function readBody(r) {
+    return r.text().then(function (t) {
+      var body = null;
+      try { body = t ? JSON.parse(t) : null; } catch (e) { body = null; }
+      return { status: r.status, ct: r.headers.get('content-type') || '', text: t || '', body: body };
+    });
+  }
+
+  function looksLocal(url) {
+    return /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+)(:\d+)?(\/|$)/i.test(url);
+  }
+
+  function snippet(t) {
+    return String(t == null ? '' : t).replace(/\s+/g, ' ').trim().slice(0, 80);
+  }
+
+  function explain(res, url) {
+    var lines = ['目标 ' + url, 'HTTP ' + res.status + (res.ct ? ' · ' + res.ct.split(';')[0] : '')];
+    if (looksLocal(state.base)) {
+      lines.push('「编辑器地址」现在是本机服务（' + state.base + '），它没有 /api/prices 这个函数。');
+      lines.push('改成线上站点即可：' + DEFAULT_BASE);
+    } else if (/text\/html/i.test(res.ct) || /^\s*</.test(res.text)) {
+      lines.push('这个地址对 /api/prices 回的是网页而不是接口 —— 该站点没部署 Pages Functions，或路径被前端路由接管了。');
+      lines.push('内容开头：' + snippet(res.text));
+    } else if (!res.text) {
+      lines.push('返回空内容（状态码异常但没正文）。');
+    } else {
+      lines.push('返回的不是 JSON：' + snippet(res.text));
+    }
+    return lines.join('\n');
+  }
+
+  // 上传失败时把数据塞进剪贴板，让人还能走「粘贴」这条老路
+  function stashBundle() {
+    try { return !!window.__QD.copy({}); } catch (e) { return false; }
+  }
+
+  function doProbe() {
+    var url = state.base + '/api/prices';
+    say('检查 ' + url + ' …');
+    fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' })
+      .then(readBody)
+      .then(function (res) {
+        if (res.body) {
+          say('通道正常 · GET ' + url + ' → HTTP ' + res.status + '，返回 JSON。'
+            + (state.token ? '\n令牌已填，可以直接上传。' : '\n还没填采集令牌，上传会被拒（401）。'), 'ok');
+        } else {
+          say('通道不通：\n' + explain(res, url), 'err');
+        }
+      })
+      .catch(function (e) {
+        say('连不上 ' + url + '：' + e.message + '\n'
+          + '· 地址写错了？\n'
+          + '· 该站点没给 Access-Control-Allow-Origin，浏览器把跨域请求挡了？\n'
+          + '（本机 dev 服务就是这种情况，换成线上站点）', 'err');
+      });
+  }
+
   function doUpload() {
     if (!window.__QD) return say('采集脚本还没就绪', 'warn');
     if (!state.token) {
@@ -265,20 +337,24 @@
     if (!bundle.samples.length && !bundle.apis.length) {
       return say('还没抓到东西 —— 先在页面上滚几屏让列表发请求', 'warn');
     }
+    var url = state.base + '/api/prices?action=save-session';
     state.busy = true;
     say('上传中…（' + bundle.samples.length + ' 条）');
     // 上传请求本身也会被采集脚本 hook 到，先暂停记录，免得污染「有没有新数据」的判断
     window.__QD_PAUSE__ = true;
-    fetch(state.base + '/api/prices?action=save-session', {
+    fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Collect-Token': state.token },
       body: JSON.stringify({ bundle: bundle }),
-    }).then(function (r) {
-      return r.json().then(function (j) { return { status: r.status, body: j }; });
-    }).then(function (res) {
+    }).then(readBody).then(function (res) {
       state.busy = false;
       window.__QD_PAUSE__ = false;
-      var b = res.body || {};
+      if (!res.body) {
+        var stashed = stashBundle();
+        return say('上传失败 · 接口返回的不是 JSON\n' + explain(res, url)
+          + (stashed ? '\n\n已经把这批 JSON 复制到剪贴板：去编辑器「市价 → 千岛接入 → 控制台脚本」粘进去点「保存并解析」。' : ''), 'err');
+      }
+      var b = res.body;
       if (!b.success) {
         var hint = res.status === 401 || res.status === 403
           ? '令牌不对或已被重置 —— 回编辑器重新生成一个'
@@ -293,7 +369,10 @@
     }).catch(function (e) {
       state.busy = false;
       window.__QD_PAUSE__ = false;
-      say('上传失败：' + e.message, 'err');
+      var stashed = stashBundle();
+      say('上传失败 · 请求没发出去：' + e.message + '\n' + url + '\n'
+        + '大概率是跨域被拒（该站点没用 Access-Control-Allow-Origin 放行）或地址不可达。'
+        + (stashed ? '\n已把这批 JSON 复制到剪贴板，可以走「控制台脚本」粘贴那条路。' : ''), 'err');
     });
   }
 
@@ -570,7 +649,8 @@
   function boot() {
     mount();
     injectCollector().then(function () {
-      say('就绪。滚动页面 / 切分类即可开始捕获。');
+      // 地址指向本机时别用「就绪」把警告盖掉
+      if (!looksLocal(state.base)) say('就绪。滚动页面 / 切分类即可开始捕获。');
       refreshCount();
     }).catch(function (e) {
       say(e.message, 'err');

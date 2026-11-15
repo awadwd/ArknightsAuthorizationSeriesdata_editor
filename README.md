@@ -269,6 +269,19 @@ curl -X POST https://<你的 pages 域名>/api/admin/sync \
 半小时起步，也更容易撞 `405`。撞到限流时脚本会自己等 45s 起（逐次加长）再续，
 连续 4 次才停手——停下时已抓到的都已经上传了，不会白跑。
 
+**上传报 `Unexpected token '<', "<!DOCTYPE"` 怎么办**
+
+只有一个含义：那个地址回的是一张网页，不是接口。最常见的原因是面板里的**「编辑器地址」填成了本机
+dev 服务**（`vite` / `npm start` 都没有 Pages Functions，`POST /api/prices` 落到前端路由 → 回
+`index.html`；express 则回 `Cannot POST /api/prices` 的 HTML 404）。这种站点生成的令牌也是本机
+KV 里的，换到线上不通用。
+
+处理：把「编辑器地址」改成你线上部署的地址（自建就填自己的域名，默认
+`https://arknightsauthorizationseriesdataeditor.pages.dev`），到线上「千岛接入 → 采集令牌」重新生成一个，
+再点面板上的「检查通道」——它会直接把这个地址的返回状态码和内容类型打出来，通了再点「上传」。
+实在不想折腾上传，「复制 JSON」粘回编辑器「控制台脚本」页签一样能存（上传失败时脚本也会自动把这批
+JSON 塞进剪贴板）。
+
 ### 价格从哪来
 
 实测可用接口：`GET https://api.qiandao.com/gactus/posts/by-tag-v4`（带 `acw_sc__v2` / `acw_sc__v3`），

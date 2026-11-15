@@ -531,11 +531,17 @@ export default {
         this.error = '复制脚本失败：' + e.message
       }
     },
-    // 复制油猴脚本：把内置的默认地址替换成当前站点，自建部署也能直接用
+    // 复制油猴脚本：把内置的默认地址替换成当前站点，自建部署也能直接用。
+    // 本机 dev（vite/localhost）没有 /api/prices —— 那种情况保留线上默认地址，
+    // 否则装好的脚本会把上传打到 dev 服务上，拿回一张 index.html。
     async fetchUserscript() {
       const res = await fetch('/qiandao.user.js', { cache: 'no-store' })
       if (!res.ok) throw new Error('HTTP ' + res.status)
       const code = await res.text()
+      const host = location.hostname
+      const isLocal = !/^https?:$/.test(location.protocol)
+        || /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+)$/.test(host)
+      if (isLocal) return code
       return code.replace(
         /var DEFAULT_BASE = '[^']*'/,
         "var DEFAULT_BASE = '" + location.origin + "'"
