@@ -13,7 +13,46 @@ const REPO_CONFIG = {
   branch: 'dev'
 };
 
+// Cloudflare Cron Trigger：定时把"同步 + 市价刷新"打给编辑器后端。
+// 为什么放在 Worker：GitHub Actions 的 schedule 在低活跃仓库上会被推迟到 4~6 小时一次，
+// 而 Worker 的 cron 是平台级触发，能稳定按 30 分钟跑。
+async function callEditor(env, path, body) {
+  const base = String(env.EDITOR_API_BASE || '').replace(/\/+$/, '');
+  const token = String(env.SYNC_TOKEN || '');
+  if (!base || !token) return { ok: false, error: 'missing EDITOR_API_BASE / SYNC_TOKEN' };
+  try {
+    const res = await fetch(base + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Sync-Token': token },
+      body: JSON.stringify(body || {}),
+    });
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch (e) { json = { raw: text.slice(0, 300) }; }
+    return { ok: res.ok, status: res.status, data: json };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    const cron = (event && event.cron) || '';
+    const hour = new Date().getUTCHours();
+    const jobs = [];
+
+    jobs.push(callEditor(env, '/api/admin/sync', {}));
+
+    // 市价：默认每 12 小时刷一次（0 点和 12 点 UTC），避免把行情接口打得太勤
+    if (hour % 12 === 0) {
+      jobs.push(callEditor(env, '/api/prices?action=apply', {}));
+    }
+
+    const results = await Promise.all(jobs);
+    console.log('cron', cron, JSON.stringify(results).slice(0, 800));
+    return results;
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;

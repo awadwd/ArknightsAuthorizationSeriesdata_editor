@@ -137,26 +137,84 @@ export const KC_TABLES = ${JSON.stringify(KC_TABLES, null, 2)};
   return header + HANDLERS;
 }
 
-// 从编辑器仓库拉当前 KC_DATA
-export async function fetchCurrentKcData(token) {
+// 解析 kc-data.js 里的 KC_DATA 对象
+export function parseKcDataJs(text) {
+  if (!text) return null;
+  const m = String(text).match(/export const KC_DATA = ([\s\S]*?);\n\nexport const KC_TABLES/);
+  if (!m) return null;
+  try { return JSON.parse(m[1]); } catch (e) { return null; }
+}
+
+// 从编辑器仓库拉当前 kc-data.js（原文 + sha）
+export async function fetchCurrentKcDataFile(token) {
   const res = await fetch(
     `https://api.github.com/repos/${EDITOR_REPO.owner}/${EDITOR_REPO.repo}/contents/${KC_DATA_PATH}?ref=${EDITOR_REPO.branch}`,
     { headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'Arknights-Tool', Accept: 'application/vnd.github+json' } }
   );
   if (!res.ok) return null;
   const j = await res.json();
-  const content = base64ToUtf8(j.content);
-  const m = content.match(/export const KC_DATA = ([\s\S]*?);\n\nexport const KC_TABLES/);
-  if (!m) return null;
+  return { text: base64ToUtf8(j.content), sha: j.sha };
+}
+
+// 从编辑器仓库拉当前 KC_DATA
+export async function fetchCurrentKcData(token) {
+  const file = await fetchCurrentKcDataFile(token);
+  if (!file) return null;
+  const kcData = parseKcDataJs(file.text);
+  if (!kcData) return null;
+  return { kcData, sha: file.sha };
+}
+
+// 键序无关的稳定序列化：用于"数据是否真的变了"的指纹比对。
+// 知晓云返回的字段顺序不稳定，直接用 JSON.stringify 会产生大量假变更（空 PR）。
+export function stableStringify(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  const keys = Object.keys(v).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+}
+
+// FNV-1a 32bit，短指纹用于展示与快速比较
+export function hashCode(str) {
+  let h = 0x811c9dc5;
+  const s = String(str);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return ('0000000' + h.toString(16)).slice(-8);
+}
+
+// 每表指纹 + 行数，同步结果里展示给前端
+export function kcStats(kcData) {
+  const out = {};
+  for (const t of Object.keys(kcData || {})) {
+    const rows = kcData[t];
+    const fp = stableStringify(rows);
+    out[t] = { count: Array.isArray(rows) ? rows.length : 0, hash: hashCode(fp) };
+  }
+  out.__all = { hash: hashCode(stableStringify(kcData || {})), tables: Object.keys(kcData || {}).length };
+  return out;
+}
+
+// 同步完成后通知 Cloudflare Pages 重建（否则仓库文件变了、线上还是旧数据）
+export async function triggerDeployHook(env) {
+  const url = (env && (env.PAGES_DEPLOY_HOOK || env.DEPLOY_HOOK_URL)) || '';
+  if (!url) return { ok: false, skipped: true };
   try {
-    return { kcData: JSON.parse(m[1]), sha: j.sha };
+    const res = await fetch(url, { method: 'POST' });
+    let body = '';
+    try { body = (await res.text()).slice(0, 200); } catch (e) {}
+    return { ok: res.ok, status: res.status, body };
   } catch (e) {
-    return null;
+    return { ok: false, error: e.message };
   }
 }
 
 // 推送到编辑器仓库（建 PR + 自动 squash merge）
-export async function pushKcData(token, kcData, commitMessage) {
+// opts.force=true 即使数据没变也提交；opts.env 用于触发部署钩子
+export async function pushKcData(token, kcData, commitMessage, opts) {
+  const o = opts || {};
   const content = buildKcDataJs(kcData);
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -165,6 +223,15 @@ export async function pushKcData(token, kcData, commitMessage) {
     Accept: 'application/vnd.github+json',
   };
   const { owner, repo, branch } = EDITOR_REPO;
+
+  if (!o.force) {
+    const cur = await fetchCurrentKcDataFile(token);
+    const curData = cur && parseKcDataJs(cur.text);
+    if (curData && stableStringify(curData) === stableStringify(kcData)) {
+      return { changed: false, url: null, merged: false, reason: 'no-change' };
+    }
+  }
+
   const refRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`, { headers });
   if (!refRes.ok) throw new Error('get base ref failed: ' + refRes.status);
   const baseSha = (await refRes.json()).object.sha;
@@ -189,5 +256,8 @@ export async function pushKcData(token, kcData, commitMessage) {
   const mergeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prData.number}/merge`, {
     method: 'PUT', headers, body: JSON.stringify({ merge_method: 'squash' })
   });
-  return { url: prData.html_url, merged: mergeRes.ok };
+  const deploy = mergeRes.ok ? await triggerDeployHook(o.env) : { ok: false, skipped: true };
+  return { changed: true, url: prData.html_url, merged: mergeRes.ok, deploy };
 }
+
+export { EDITOR_REPO, KC_DATA_PATH, utf8ToBase64, base64ToUtf8 };

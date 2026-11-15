@@ -8,3 +8,15 @@ id = "0e723597d55345dea472308ba8b34f0b"
 
 [vars]
 GITHUB_REDIRECT_URI = "https://arknights-api.2726269007.workers.dev/api/auth/callback"
+# 编辑器站点（Cloudflare Pages）的公网地址。cron 会回调它的
+# /api/admin/sync 与 /api/prices，所以必须是能公网访问的域名。
+EDITOR_API_BASE = "https://arknightsauthorizationseriesdataeditor.pages.dev"
+
+# 定时触发：Cloudflare 平台级 cron，比 GitHub Actions 的 schedule 稳定得多
+# （Actions 的 hourly schedule 在低活跃仓库上实测会被推迟到 4~6 小时一次）
+[triggers]
+crons = ["*/30 * * * *"]
+
+# 需要的 secret（用 wrangler secret put 写入，不要写在这个文件里）：
+#   SYNC_TOKEN        —— 与 Pages 侧同名的机器触发口令
+#   SYNC_GITHUB_TOKEN —— Pages 侧用来推送仓库的 PAT（配置在 Pages 环境变量里）
