@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         千岛行情采集 → 通行证工具编辑器
 // @namespace    https://github.com/awadwd/ArknightsAuthorizationSeriesdata_editor
-// @version      1.2.0
+// @version      1.3.0
 // @description  在千岛（qiandao.com）页面里自动收集明日方舟通行证的市价，一键复制或直接上传到编辑器，省掉 F12 粘贴
 // @author       awadwd
 // @match        https://qiandao.com/*
@@ -32,6 +32,8 @@
   var LS_TOKEN = 'qd_collect_token';
   var LS_AUTO = 'qd_collect_auto';
   var LS_BOX = 'qd_selected_box';
+  var LS_TPL = 'qd_search_url';      // 学到的搜索地址模板（关键词位置写成 {kw}）
+  var SS_PENDING = 'qd_pending_kw';  // 刚提交的关键词，用来在落地页上学模板
 
   function ls(k, d) {
     try { var v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; }
@@ -50,6 +52,19 @@
     scroller: null,
     pickedInput: null,   // 用户手动点过的输入框，自动搜索优先用它
   };
+
+  // 之前版本可能把搜索关键词写进了「编辑器地址」并存进 localStorage，
+  // 那样每次打开都会拿着一串脏地址去拉采集脚本。这里先自愈。
+  (function healStored() {
+    if (state.base && !/^https?:\/\/[^\s]+$/i.test(state.base)) {
+      state.base = DEFAULT_BASE;
+      lsSet(LS_BASE, '');
+    }
+    if (state.token && !/^[\w.\-]{8,}$/.test(state.token)) {
+      state.token = '';
+      lsSet(LS_TOKEN, '');
+    }
+  })();
 
   /* ---------------- 注入采集脚本 ---------------- */
   var injectPromise = null;
@@ -216,6 +231,7 @@
       '      <button class="qd-btn primary" data-act="autosearch">开始自动搜索</button>',
       '      <button class="qd-btn" data-act="stopsearch">停止</button>',
       '    </div>',
+      '    <div class="qd-mini" id="qd-tpl" style="cursor:pointer;display:none;"></div>',
       '    <div id="qd-msg">滚动或切一下分类，页面的列表请求会被自动抄下来。</div>',
       '    <div class="qd-row" style="margin-top:8px;">',
       '      <button class="qd-btn" data-act="copy">复制 JSON</button>',
@@ -240,6 +256,7 @@
     el.token = wrap.querySelector('#qd-token');
     el.auto = wrap.querySelector('#qd-auto');
     el.box = wrap.querySelector('#qd-box');
+    el.tpl = wrap.querySelector('#qd-tpl');
 
     el.base.value = state.base === DEFAULT_BASE ? '' : state.base;
     el.base.placeholder = DEFAULT_BASE;
@@ -278,6 +295,16 @@
       injectPromise = null;   // 换站点要重新拉脚本
       injectCollector().then(function () { say('已切换到 ' + state.base, 'ok'); }).catch(function (e) { say(e.message, 'err'); });
     });
+    // 逐字符盯着：地址里不可能有空格，一旦出现「干员名 通行证」这种带空格的串，
+    // 说明有东西往这里写了关键词 —— 立刻还原，别让它再被 change 存进 localStorage
+    el.base.addEventListener('input', function () {
+      var v = el.base.value.trim();
+      if (!v) return;
+      if (!/^https?:\/\//i.test(v) && /\s/.test(v)) {
+        el.base.value = state.base === DEFAULT_BASE ? '' : state.base;
+        say('“编辑器地址”里不能有空格（看着像被写了搜索关键词），已还原', 'warn');
+      }
+    });
     el.token.addEventListener('change', function () {
       var t = el.token.value.trim();
       if (t && !/^[\w.\-]{8,}$/.test(t)) {
@@ -295,6 +322,14 @@
     if (el.box) {
       el.box.addEventListener('change', function () { lsSet(LS_BOX, el.box.value); });
     }
+    if (el.tpl) {
+      el.tpl.addEventListener('click', function () {
+        lsSet(LS_TPL, '');
+        refreshTpl();
+        say('已清掉记住的搜索地址，下次会重新学一次', 'warn');
+      });
+      refreshTpl();
+    }
 
     // 记下用户手动点过的输入框（面板外的），自动搜索时优先用它 ——
     // 真实站点的搜索框常常没 class/placeholder，猜不准就靠这一下
@@ -302,6 +337,17 @@
       var t = ev.target;
       if (!t || inPanel(t) || !isEditableEl(t)) return;
       state.pickedInput = t;
+    }, true);
+
+    // 你自己手动搜一次也算「教学」：记住这次的关键词，落地页就能把搜索地址学下来。
+    // 这样即使脚本点不开搜索框，人手搜一次之后也全自动。
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Enter' && ev.keyCode !== 13) return;
+      if (ev.isComposing) return;
+      var t = ev.target;
+      if (!t || inPanel(t) || !isEditableEl(t)) return;
+      var v = String(t.value || t.textContent || '').trim();
+      if (v) markPending(v);
     }, true);
 
     setInterval(refreshCount, 1500);
@@ -618,29 +664,40 @@
     ].join(' ');
   }
 
-  function findSearchInput() {
+  function usableInput(inp) {
+    if (!inp || !inp.isConnected) return false;
+    if (inPanel(inp)) return false;                  // 绝不碰自己的面板
+    if (inp.disabled || inp.readOnly) return false;
+    if (!visible(inp)) return false;
+    if ((inp.getAttribute('type') || '').toLowerCase() === 'password') return false;
+    return isEditableEl(inp);
+  }
+
+  // 只认三类：用户亲手点过的框、语义上写着「搜索」的框、点开触发器后新出现的框。
+  // 以前还有一条「页面上只有一个文本框就用它」的兜底 —— 面板自己的「编辑器地址」
+  // 正好满足这个条件，于是关键词被写进去、还存进了 localStorage。那条兜底删了。
+  function safeSearchInput() {
+    if (usableInput(state.pickedInput)) return state.pickedInput;
     var nodes = collectEditable(document);
-    var textish = [];
-    var semantic = null;
     for (var i = 0; i < nodes.length; i++) {
       var inp = nodes[i];
-      if (inPanel(inp)) continue;                    // 绝不碰自己的面板
-      if (inp.disabled || inp.readOnly) continue;
-      if (!visible(inp)) continue;
-      if ((inp.getAttribute('type') || '').toLowerCase() === 'password') continue;
-      var hay = describeInput(inp).toLowerCase();
-      if (/搜|查找|search|keyword|query/.test(hay)) { semantic = semantic || inp; continue; }
-      if (isEditableEl(inp)) textish.push(inp);
+      if (!usableInput(inp)) continue;
+      if (/搜|查找|search|keyword|query/.test(describeInput(inp).toLowerCase())) return inp;
     }
-    if (semantic) return semantic;
-    // 用户手动点过的那个框最可信（真实站点的搜索框常常藏得没 class）
-    if (state.pickedInput && textish.indexOf(state.pickedInput) >= 0) return state.pickedInput;
-    // 只有一个候选才敢盲猜；有多个就报错让人点一下，别乱写
-    return textish.length === 1 ? textish[0] : null;
+    return null;
+  }
+
+  function visibleEditables() {
+    var all = collectEditable(document);
+    var out = [];
+    for (var i = 0; i < all.length; i++) if (usableInput(all[i])) out.push(all[i]);
+    return out;
   }
 
   // 直接改 value 不会触发 Vue/React 的绑定，得走原生 setter + 事件
   function setNativeValue(inp, val) {
+    // 最后一道闸：面板自己的输入框（编辑器地址 / 采集令牌）永远不许被当成搜索框写
+    if (inPanel(inp)) throw new Error('refuse: 目标是采集面板自己的输入框');
     var tag = (inp.tagName || '').toLowerCase();
     if (tag !== 'input' && tag !== 'textarea') {
       inp.textContent = val;                       // contenteditable
@@ -717,46 +774,113 @@
   }
 
   function findSearchTrigger() {
-    var nodes = document.querySelectorAll('button, a, div, span, i, svg, img, [role="button"], [class*="search"], [class*="Search"], [id*="search"], [id*="Search"]');
+    var nodes = document.querySelectorAll('button, a, [role="button"], [aria-label], [class*="search"], [class*="Search"], [id*="search"], [id*="Search"]');
     var best = null;
     var bestScore = -1;
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i];
       if (inPanel(n) || !visible(n)) continue;
       var r = n.getBoundingClientRect();
-      if (r.width < 10 || r.height < 10 || r.width > 360 || r.height > 140) continue;
+      if (r.width < 8 || r.height < 8 || r.width > 400 || r.height > 160) continue;
       var txt = String(n.innerText || n.textContent || '').trim();
       var cls = n.className && n.className.baseVal !== undefined ? n.className.baseVal : (n.className || '');
-      var meta = ((n.getAttribute('aria-label') || '') + ' ' + cls + ' ' + (n.id || '')).toLowerCase();
+      var aria = n.getAttribute('aria-label') || '';
+      var meta = (aria + ' ' + cls + ' ' + (n.id || '')).toLowerCase();
       if (!isTriggerish(txt, meta)) continue;
       var score = 0;
       if (/^(搜索|search)$/i.test(txt)) score += 3;
+      if (/^(搜索|搜索商品)$/.test(aria.trim())) score += 3;   // 千岛就是 aria-label="搜索"
       if (/search/i.test(meta)) score += 2;
-      if (r.top < 260) score += 2;                       // 顶部导航
-      if (r.left > window.innerWidth * 0.45) score += 2;  // 右上角
+      if (n.tagName === 'BUTTON') score += 1;
+      if (n.getAttribute('aria-expanded') !== null) score += 2; // 展开式面板的开关
+      if (r.top < 260) score += 2;                        // 顶部导航
+      if (r.left > window.innerWidth * 0.45) score += 2;   // 右上角
       if (n.closest('header,nav,[class*="header"],[class*="nav"]')) score += 1;
       if (score > bestScore) { bestScore = score; best = n; }
     }
     return best;
   }
 
-  // 打开并返回可用的输入框；打不开就返回 null（绝不拿面板自己的框凑数）
+  // 点开搜索后，优先认「新出现的输入框」（说明它就是被展开的那个）；
+  // 其次认语义上的搜索框；再其次认用户点过的。都不认就返回 null，绝不瞎写。
   function openSearch(timeoutMs) {
-    var cur = findSearchInput();
-    if (cur && visible(cur)) return Promise.resolve(cur);
+    var cur = safeSearchInput();
+    if (cur) return Promise.resolve(cur);
+
     var trig = findSearchTrigger();
-    if (!trig) return Promise.resolve(cur || null);
+    if (!trig) {
+      // 没有触发器：页面上可能本来就有个搜索框（桌面端）。看不见就交给用户点一次
+      return Promise.resolve(null);
+    }
+    var beforeSet = visibleEditables();
     fireClick(trig);
+    var startHref = location.href;
     return new Promise(function (resolve) {
       var waited = 0;
-      var limit = timeoutMs || 2500;
+      var limit = timeoutMs || 2800;
       var timer = setInterval(function () {
         waited += 200;
-        var inp = findSearchInput();
-        if (inp && visible(inp)) { clearInterval(timer); return resolve(inp); }
-        if (waited >= limit) { clearInterval(timer); resolve(inp || null); }
+        if (location.href !== startHref) {          // 点一下直接跳搜索页了
+          clearInterval(timer);
+          return resolve({ nav: true });
+        }
+        var picked = safeSearchInput();
+        if (picked && beforeSet.indexOf(picked) < 0) { clearInterval(timer); return resolve(picked); }
+        if (waited >= limit) {
+          clearInterval(timer);
+          // 没抓到「新出现」的，但语义上确实是个搜索框，也认
+          resolve(safeSearchInput());
+        }
       }, 200);
     });
+  }
+
+  /* ---------------- 记住「搜索地址」 ----------------
+   * 真机上靠猜 DOM 太脆：搜索框收起、组件在 shadow root、点击被 Vue 拦……
+   * 所以再加一条稳的路：第一次真正搜出去时把落地 URL 里的关键词换成 {kw} 存下来，
+   * 之后每个词直接 location.href 跳过去 —— 页面自己会发请求，采集器照抄即可，
+   * 完全不用碰任何输入框。
+   */
+  function learnSearchUrl() {
+    var pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(SS_PENDING) || 'null'); } catch (e) {}
+    if (!pending || !pending.kw) return;
+    var kw = String(pending.kw);
+    var href = location.href;
+    var forms = [
+      encodeURIComponent(kw),
+      encodeURIComponent(kw).replace(/%20/g, '+'),
+      kw,
+    ];
+    for (var i = 0; i < forms.length; i++) {
+      var f = forms[i];
+      var at = href.indexOf(f);
+      if (at < 0) continue;
+      var tpl = href.slice(0, at) + '{kw}' + href.slice(at + f.length);
+      if (tpl.length > 2000) continue;
+      lsSet(LS_TPL, tpl);
+      try { sessionStorage.removeItem(SS_PENDING); } catch (e) {}
+      refreshTpl();
+      say('已记住千岛的搜索地址，后面直接用 URL 跳，不再碰搜索框\n' + tpl, 'ok');
+      return;
+    }
+  }
+
+  function searchUrlFor(kw) {
+    var tpl = ls(LS_TPL, '');
+    if (!tpl) return null;
+    return tpl.replace('{kw}', encodeURIComponent(kw));
+  }
+
+  function refreshTpl() {
+    if (!el.tpl) return;
+    var t = ls(LS_TPL, '');
+    el.tpl.style.display = t ? '' : 'none';
+    el.tpl.textContent = t ? '已记住搜索地址（点这里清除）：' + t.replace('{kw}', '…') : '';
+  }
+
+  function markPending(kw) {
+    try { sessionStorage.setItem(SS_PENDING, JSON.stringify({ kw: kw, at: Date.now() })); } catch (e) {}
   }
 
   function doStopSearch() {
@@ -803,22 +927,19 @@
       label = '关键词兜底（通行证）';
     }
 
-    // 千岛的搜索框默认是收起的，先点开右上角那个「🔍 搜索」
-    say('正在打开搜索框…');
-    openSearch(3000).then(function (input) {
-      if (!input) {
-        return say('打不开千岛的搜索框。\n手动点一下右上角「🔍 搜索」把它展开，再点「开始自动搜索」——脚本会记住你点过的那个输入框。', 'err');
-      }
-      var words = names.map(function (n) { return n + ' 通行证'; });
-      state.queue = {
-        words: words, i: 0, ok: 0, fail: 0, retry: 0, label: label,
-        timer: null, uploaded: 0, input: input, resumes: 0,
-      };
-      say('开始自动搜索 · ' + label + '\n用' + (input === state.pickedInput ? '你刚点的搜索框' : '页面搜索框')
-        + '逐个搜索并抓取，撞限流会自动等待；随时可按「停止」');
-      saveQueue();
-      stepSearch();
-    });
+    // 队列先建好再动手：点一下搜索按钮有可能直接跳页，
+    // 跳完要靠 sessionStorage 里的队列接着跑，所以顺序不能反。
+    var words = names.map(function (n) { return n + ' 通行证'; });
+    state.queue = {
+      words: words, i: 0, ok: 0, fail: 0, retry: 0, label: label,
+      timer: null, uploaded: 0, input: null, resumes: 0,
+    };
+    var how = searchUrlFor(words[0])
+      ? '已记住搜索地址，按 URL 逐个跳（不碰页面输入框）'
+      : '先用一次真搜索把地址学下来，之后全自动';
+    say('开始自动搜索 · ' + label + '\n' + how + '；撞限流会自动等待，随时可按「停止」');
+    saveQueue();
+    stepSearch();
   }
 
   /* 自动搜索要跨页面（千岛按 Enter 会跳到搜索结果页），所以进度得存 sessionStorage，
@@ -864,14 +985,19 @@
 
     setTimeout(function () {
       if (!state.queue) return;
-      // 上一个词到底抓没抓到，靠「记录数有没有变多」判断，比盲目记成功可信
-      if (pending) {
+      // 上一个词到底抓没抓到，靠「记录数有没有变多」判断，比盲目记成功可信。
+      // 结果接口可能慢半拍，多等几秒再下结论，别把还在路上的当成失败。
+      if (!pending) return stepSearch();
+      var base = saved.atCount || 0;
+      var startedAt = Date.now();
+      var iv = setInterval(function () {
+        if (!state.queue) { clearInterval(iv); return; }
         var now = 0;
         try { now = window.__QD ? window.__QD.count() : 0; } catch (e) {}
-        if (now > (saved.atCount || 0)) q.ok++; else q.fail++;
-      }
-      stepSearch();
-    }, 2200);
+        if (now > base) { clearInterval(iv); q.ok++; return stepSearch(); }
+        if (Date.now() - startedAt > 4500) { clearInterval(iv); q.fail++; return stepSearch(); }
+      }, 300);
+    }, 1400);
   }
 
   function stepSearch() {
@@ -890,15 +1016,36 @@
     }
 
     var kw = q.words[q.i];
-    // 搜索框每搜一次会被收起来（千岛默认收起），先确保它开着
-    var input = (q.input && q.input.isConnected !== false && visible(q.input)) ? q.input : null;
+
+    // ① 已经学过搜索地址 → 直接跳过去，完全不碰页面上的任何输入框
+    var jump = searchUrlFor(kw);
+    if (jump) {
+      if (jump === location.href) {          // 同一个地址不会再发请求，跳过
+        q.fail++; q.i++; saveQueue();
+        return setTimeout(function () { if (state.queue) stepSearch(); }, 600);
+      }
+      q.awaiting = { kw: kw, i: q.i };
+      q.atCount = window.__QD.count();
+      saveQueue();
+      say('搜索 ' + (q.i + 1) + '/' + q.words.length + '：' + kw + '\n按搜索地址直接跳页，成功 ' + q.ok + ' · 无数据 ' + q.fail);
+      location.href = jump;
+      return;
+    }
+
+    // ② 还没学过 → 老老实实点搜索框；这一轮只用来「学会地址」
+    var input = (q.input && q.input.isConnected !== false && visible(q.input) && !inPanel(q.input)) ? q.input : null;
     if (!input) {
-      openSearch(2400).then(function (inp) {
+      openSearch(2800).then(function (inp) {
         if (!state.queue) return;
+        if (inp && inp.nav) {                 // 点触发器直接跳页了，回来由 resumeQueue 接
+          saveQueue();
+          return say('千岛直接跳到搜索页了，回来接着搜…');
+        }
         if (!inp) {
           state.queue = null;
           saveQueue();
-          return say('搜索框又收起来了，而且点不开。\n手动点一下右上角「🔍 搜索」展开，再点「开始自动搜索」接着跑（已抓到的不会丢）。', 'err');
+          return say('没认出千岛的搜索框，也没找到右上角那个「搜索」按钮。\n'
+            + '手动点一下搜索、在框里随便搜一次（它会记住搜索地址，之后全自动），再回来点「开始自动搜索」。', 'err');
         }
         q.input = inp;
         stepSearch();
@@ -911,7 +1058,14 @@
     q.awaiting = { kw: kw, i: q.i };
     q.atCount = before;
     saveQueue();
-    setNativeValue(input, kw);
+    markPending(kw);          // 跳走以后靠它把「搜索地址」学下来
+    try {
+      setNativeValue(input, kw);
+    } catch (e) {
+      state.queue = null;
+      saveQueue();
+      return say('没敢往那个框里写（它不是站内搜索框）。已停下，已抓到的都在。', 'err');
+    }
     submitSearch(input);
 
     waitForCapture(before, 12000).then(function (res) {
@@ -945,9 +1099,10 @@
   /* ---------------- 启动 ---------------- */
   function boot() {
     mount();
+    learnSearchUrl();   // 刚跳过来这一页可能正好带着上一步的关键词 → 顺手把地址模板学下来
     injectCollector().then(function () {
       // 地址指向本机时别用「就绪」把警告盖掉
-      if (!looksLocal(state.base)) say('就绪。滚动页面 / 切分类即可开始捕获。');
+      if (!looksLocal(state.base) && !ls(LS_TPL, '')) say('就绪。滚动页面 / 切分类即可开始捕获。');
       refreshCount();
       resumeQueue();   // 上次自动搜索如果是在跳页时中断的，这里接着跑
     }).catch(function (e) {
