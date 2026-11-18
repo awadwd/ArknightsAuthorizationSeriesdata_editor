@@ -19,9 +19,10 @@ import { verifySyncRequest, syncCors } from './_lib/syncAuth.js';
 import {
   loadBoxes, writeBoxes, fetchQiandao, aggregate, diffBoxes, buildNameIndex, normalizeSamples,
   resolveSamples, filterRecords, extractRecords, eliteFromTitle,
+  priceFreshness, stampPrices, PRICE_TIME_FIELD,
 } from './_lib/prices.js';
 import { saveSession, getSession, clearSession, sessionStatus, qdRequest, pickReplayApis } from './_lib/qiandao.js';
-import { getJob, saveJob, resetJob, runStep, jobSummary, seedRecords } from './_lib/crawl.js';
+import { getJob, saveJob, resetJob, runStep, shouldRun, jobSummary, seedRecords } from './_lib/crawl.js';
 import { verifyCollectToken, collectTokenStatus, rotateCollectToken } from './_lib/collectAuth.js';
 
 function json(data, status) {
@@ -35,6 +36,48 @@ function maskHeaders(h) {
     out[k] = v.length > 12 ? v.slice(0, 4) + '***' + v.slice(-3) : '***';
   }
   return out;
+}
+
+const FRESH_KEY = 'price_freshness';
+const FRESH_TTL_MS = 10 * 60 * 1000;
+
+// 读 Box_Id.json 判断市价新不新鲜，给 crawl-step / apply 当前置闸门。
+// 读失败（token 没权限、文件不见了）就返回 null，表示「不拦」，让抓取照常进行——
+// 宁可多抓一次，也不要因为读不到文件而把整个自动更新卡死。
+async function readFileFreshness(env, cfg, auth, body) {
+  const now = Date.now();
+  try {
+    const raw = env && env.AUTH_STORE ? await env.AUTH_STORE.get(FRESH_KEY) : null;
+    if (raw) {
+      const c = JSON.parse(raw);
+      if (c && c.at && now - c.at < FRESH_TTL_MS && c.data) return c.data;
+    }
+  } catch (e) { /* 缓存坏了就当没有 */ }
+
+  let data = null;
+  try {
+    const loaded = await loadBoxes(cfg, auth.token, auth.source, body && body.target, body && body.base);
+    data = loaded.freshness;
+  } catch (e) {
+    return null;
+  }
+  try {
+    if (env && env.AUTH_STORE) await env.AUTH_STORE.put(FRESH_KEY, JSON.stringify({ at: now, data }));
+  } catch (e) {}
+  return data;
+}
+
+// 面板上的「下一句该干什么」要跟 Box_Id.json 里的核对时间对齐：
+// 任务状态机说「该重开一轮」，但如果文件里的市场时间还没到周期，真正生效的是后者。
+function withFreshGate(summary, freshness) {
+  if (!summary) return summary;
+  if (freshness && freshness.fresh) {
+    return Object.assign({}, summary, {
+      reason: freshness.reason,
+      priceTimeGate: true,
+    });
+  }
+  return summary;
 }
 
 function matrixOf(boxes) {
@@ -181,15 +224,16 @@ export async function onRequestGet(context) {
   const session = await getSession(context.env);
   const job = await getJob(context.env);
   try {
-    const { target, ref, boxes } = await loadBoxes(cfg, auth.token, auth.source, url.searchParams.get('target'), url.searchParams.get('base'));
+    const { target, ref, boxes, freshness } = await loadBoxes(cfg, auth.token, auth.source, url.searchParams.get('target'), url.searchParams.get('base'));
     const pcfg = cfg.prices || {};
     return json({
       success: true,
       target: { kind: target.kind, owner: target.owner, repo: target.repo, base: ref },
       count: boxes.length,
       matrix: matrixOf(boxes),
+      freshness,
       session: sessionStatus(session),
-      crawl: jobSummary(job, pcfg),
+      crawl: withFreshGate(jobSummary(job, pcfg), freshness),
       collectToken: collectTokenStatus(cfg),
       prices: {
         enabled: !!pcfg.enabled,
@@ -349,16 +393,80 @@ export async function onRequestPost(context) {
 
   // ── 抓取任务：慢速分页 + 退避 + 断点续跑（cron 与手动共用）─────────────────
   if (action === 'crawl-step') {
+    // 月度节奏以 Box_Id.json 里的 market_priceUpdateTime 为准：
+    // 先问任务状态机「现在该继续吗」，它说该跑了，再花一次读文件确认——
+    // 文件里的时间戳没到周期就直接跳过，一个请求都不发给千岛。
+    let freshness = null;
+    const force = !!body.force;
+    if (!force) {
+      const job0 = await getJob(env);
+      const gate = shouldRun(job0, cfg.prices);
+      if (!gate.run) {
+        return json({
+          success: true, skipped: true, reason: gate.reason,
+          crawl: jobSummary(job0, cfg.prices),
+          session: sessionStatus(await getSession(env)),
+        });
+      }
+      freshness = await readFileFreshness(env, cfg, ownerAuth, body);
+      if (freshness && freshness.fresh) {
+        return json({
+          success: true, skipped: true, reason: freshness.reason,
+          freshness,
+          crawl: jobSummary(job0, cfg.prices),
+          session: sessionStatus(await getSession(env)),
+        });
+      }
+    }
     const r = await runStep(env, cfg.prices, {
-      force: !!body.force,
+      force,
       maxPages: body.maxPages,
       alwaysPage: !!body.alwaysPage,
     });
     return json({
       ...r,
+      freshness: freshness || null,
       crawl: jobSummary(r.job, cfg.prices),
       session: sessionStatus(await getSession(env)),
     }, r.ok || r.skipped ? 200 : 200);
+  }
+
+  // ── 给现有的 Box_Id.json 补记市价核对时间（一次性回填）──────────────────────
+  // 老数据里没有 market_priceUpdateTime，第一次接上这套逻辑时要先补一份，
+  // 否则会被判成「从未核对过」而立刻触发抓取。
+  if (action === 'stamp') {
+    if (machineAuth && machineAuth.machine) return json({ success: false, error: '机器账号不能回填时间戳' }, 403);
+    let loaded0;
+    try {
+      loaded0 = await loadBoxes(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base);
+    } catch (e) {
+      return json({ success: false, error: e.message }, 500);
+    }
+    const at = body.at ? new Date(body.at).toISOString() : new Date().toISOString();
+    const dry = !!body.dryRun;
+    const plan = JSON.parse(JSON.stringify(loaded0.boxes));
+    const res = stampPrices(plan, at, {});
+    const before = loaded0.freshness;
+    if (dry) {
+      return json({ success: true, dryRun: true, at, ...res, before, after: priceFreshness(plan, ((cfg.prices || {}).crawl || {}).refreshDays) });
+    }
+    if (!res.stamped) {
+      return json({ success: true, changed: false, ...res, freshness: before, message: '所有盒子都已带时间戳，无需回填' });
+    }
+    try {
+      const pr = await writeBoxes(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base,
+        plan, loaded0.file, [],
+        `chore(prices): 回填市价核对时间 ${at.slice(0, 10)}（${res.stamped} 个盒子）`,
+        { at, stamp: false });   // 上面已经打过，这里别再打一次（时间才一致）
+      return json({
+        success: true, changed: true, at, stamped: res.stamped, boxesWithPrice: res.boxesWithPrice,
+        prUrl: pr.url, prNumber: pr.number,
+        before,
+        after: priceFreshness(plan, ((cfg.prices || {}).crawl || {}).refreshDays),
+      });
+    } catch (e) {
+      return json({ success: false, error: e.message }, 500);
+    }
   }
 
   if (action === 'crawl-reset') {
@@ -392,7 +500,18 @@ export async function onRequestPost(context) {
   } catch (e) {
     return json({ success: false, error: e.message }, 500);
   }
-  const { boxes, file, target, ref } = loaded;
+  const { boxes, file, target, ref, freshness } = loaded;
+
+  // action=apply 是「重新采一轮再写」——先看 Box_Id.json 里的核对时间，没到周期就别白撞一次 WAF。
+  // crawl-apply 用的是已经抓到的记录（用户自己点的），不受这个闸门限制。
+  // force=1 可以强制。
+  if (action === 'apply' && !body.force && freshness && freshness.fresh) {
+    return json({
+      success: true, skipped: true, changed: false,
+      reason: freshness.reason, freshness,
+      target: { kind: target.kind, owner: target.owner, repo: target.repo, base: ref },
+    });
+  }
 
   const isCrawl = action === 'crawl-apply' || action === 'crawl-preview';
   const got = isCrawl ? await fromCrawl(env, cfg, boxes, body) : await collect(cfg, boxes, body, env);
@@ -424,6 +543,12 @@ export async function onRequestPost(context) {
   const working = JSON.parse(JSON.stringify(boxes));
   const diffs = diffBoxes(working, agg.prices);
 
+  // 时间戳和价格一起写：本轮匹配到的干员所在的盒子，都记上「这次核对过」。
+  // 只打一次时间（stampedAt），预览和写回用同一个值，避免两次调用差几毫秒。
+  const stampedAt = new Date().toISOString();
+  const isPreviewAction = action === 'preview' || action === 'samples' || action === 'manual' || action === 'crawl-preview';
+  const stampRes = stampPrices(working, stampedAt, { names: new Set(Object.keys(agg.prices)) });
+
   const summary = {
     provider: got.provider,
     source: got.source || null,
@@ -436,6 +561,8 @@ export async function onRequestPost(context) {
     relaxedKeyword: !!got.relaxedKeyword,
     matchedCharacters: Object.keys(agg.prices).length,
     diffs: diffs.length,
+    priceTime: { field: PRICE_TIME_FIELD, at: stampedAt, stamped: stampRes.stamped, boxesWithPrice: stampRes.boxesWithPrice },
+    freshness,
     stats: agg.stats.slice(0, 200),
     errors: got.errors || [],
     unmatchedCount: got.unmatchedCount || 0,
@@ -445,32 +572,44 @@ export async function onRequestPost(context) {
     target: { kind: target.kind, owner: target.owner, repo: target.repo, base: ref },
   };
 
-  if (action === 'preview' || action === 'samples' || action === 'manual' || action === 'crawl-preview') {
+  if (isPreviewAction) {
     // samples/manual 只用于预览，写回前需要显式 apply
     return json({ success: true, ...summary, list: diffs.slice(0, 300) });
   }
 
   if (action !== 'apply' && action !== 'crawl-apply') return json({ success: false, error: '未知 action: ' + action }, 400);
 
-  if (!diffs.length) {
+  // 价格没变但时间戳要更新（本轮确实核对过）时仍然写回 —— 这样「一个月一轮」才有依据，
+  // 否则文件里的时间戳永远停在最后一次真的改价那天，下个月会被判成过期而重抓。
+  if (!diffs.length && !stampRes.stamped) {
     return json({ success: true, ...summary, changed: false, message: '市价没有变化，未创建 PR' });
   }
 
   try {
     const pr = await writeBoxes(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base, working, file, diffs,
-      `chore(prices): 更新市价 (${diffs.length} 处) @ ${new Date().toISOString()}`);
+      diffs.length
+        ? `chore(prices): 更新市价 (${diffs.length} 处) @ ${stampedAt}`
+        : `chore(prices): 核对市价（无变化，仅记录时间） @ ${stampedAt}`,
+      { at: stampedAt, stamp: false });   // 时间戳上面已经打过，别打第二次
     try {
       await saveAppConfig(env, Object.assign({}, cfg, {
-        prices: Object.assign({}, cfg.prices || {}, { lastRunAt: new Date().toISOString(), lastResult: { ...summary, prUrl: pr.url, count: diffs.length } }),
+        prices: Object.assign({}, cfg.prices || {}, { lastRunAt: stampedAt, lastResult: { ...summary, prUrl: pr.url, count: diffs.length } }),
       }));
     } catch (e) {}
     if (isCrawl) {
       try {
         const job = await getJob(env);
-        if (job) { job.appliedAt = new Date().toISOString(); await saveJob(env, job); }
+        if (job) { job.appliedAt = stampedAt; await saveJob(env, job); }
       } catch (e) {}
     }
-    return json({ success: true, ...summary, changed: true, prUrl: pr.url, prNumber: pr.number });
+    // 刚刚写回，缓存里的 freshness 立刻作废，免得下一次 crawl-step 又读到旧值以为该抓
+    try { if (env.AUTH_STORE) await env.AUTH_STORE.delete(FRESH_KEY); } catch (e) {}
+    return json({
+      success: true, ...summary, changed: true,
+      priceChangeCount: diffs.length,
+      stamped: stampRes.stamped,
+      prUrl: pr.url, prNumber: pr.number,
+    });
   } catch (e) {
     return json({ success: false, error: e.message, ...summary }, 500);
   }

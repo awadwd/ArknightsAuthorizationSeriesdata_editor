@@ -478,6 +478,120 @@ export function aggregate(samples, opts) {
   return { prices, stats };
 }
 
+// ── 市价核对时间戳 ───────────────────────────────────────────────────────
+// Box_Id.json 是纯数组，没有地方放「文件级更新于 X」，所以时间戳记在每个盒子上：
+//   box.market_priceUpdateTime = '2026-11-18T05:36:00.000Z'
+// 语义是「这个盒子的市价最后一次被核对（无论数值有没有变）的时间」。
+//
+// 月度节奏由它决定：抓取前先读一遍文件，只有最新时间戳超过 refreshDays 才值得采一轮，
+// 否则直接跳过 —— 不再依赖 KV 里的任务状态（那是给「断点续跑」用的，不是给周期用的）。
+export const PRICE_TIME_FIELD = 'market_priceUpdateTime';
+
+// 兼容历史/手写变体，读的时候全都认；写的时候统一用 PRICE_TIME_FIELD
+const PRICE_TIME_ALIASES = [
+  PRICE_TIME_FIELD, 'market_priceUpdatetime', 'market_price_update_time', 'marketPriceUpdateTime',
+];
+
+export function readPriceTime(box) {
+  if (!box || typeof box !== 'object') return null;
+  for (const k of PRICE_TIME_ALIASES) {
+    const v = box[k];
+    if (v == null || v === '') continue;
+    const t = typeof v === 'number' ? v : Date.parse(String(v));
+    if (!isFinite(t)) continue;
+    return { raw: v, at: t, iso: new Date(t).toISOString() };
+  }
+  return null;
+}
+
+function boxHasPrice(box) {
+  for (let i = 1; i <= 10; i++) {
+    const c = box['character' + i];
+    const mp = c && c.market_price;
+    if (!mp) continue;
+    if (mp.ELITE1 != null && isFinite(Number(mp.ELITE1))) return true;
+    if (mp.ELITE2 != null && isFinite(Number(mp.ELITE2))) return true;
+  }
+  return false;
+}
+
+function boxHasAnyOf(box, names) {
+  if (!names) return true;
+  for (let i = 1; i <= 10; i++) {
+    const c = box['character' + i];
+    if (c && c.name && names.has(c.name)) return true;
+  }
+  return false;
+}
+
+/**
+ * 给本轮核对过的盒子打时间戳。
+ * @param {Array} boxes  Box_Id.json 数组（会被就地修改）
+ * @param {string} at     ISO 时间，默认现在
+ * @param {{names?: Set<string>}} opts  names = 本轮拿到样本的干员名；不传=所有有市价的盒子
+ * @returns {{stamped:number, boxesWithPrice:number, at:string}}
+ */
+export function stampPrices(boxes, at, opts) {
+  const iso = at ? new Date(Date.parse(at) || Date.now()).toISOString() : new Date().toISOString();
+  const names = (opts && opts.names) || null;
+  let stamped = 0;
+  let total = 0;
+  for (const b of boxes) {
+    if (!boxHasPrice(b)) continue;
+    total++;
+    if (!boxHasAnyOf(b, names)) continue;       // 本轮没核对到这个盒子，别动它的时间戳
+    if (b[PRICE_TIME_FIELD] === iso) continue;
+    b[PRICE_TIME_FIELD] = iso;
+    stamped++;
+  }
+  return { stamped, boxesWithPrice: total, at: iso };
+}
+
+/**
+ * 这份文件的市价新不新鲜。
+ * 口径刻意取「最新」而不是「最旧」：一轮抓取是全量覆盖，跑完写回后所有被覆盖的盒子
+ * 都是同一个时间；用最新值判断既能实现「一月一轮」，又不会因为冷门盒永远匹配不到样本
+ * 而陷入「每 30 分钟重开一轮」。
+ */
+export function priceFreshness(boxes, refreshDays, now) {
+  const ts = now || Date.now();
+  const days = Number(refreshDays) > 0 ? Number(refreshDays) : 30;
+  const list = Array.isArray(boxes) ? boxes : [];
+  let newest = 0;
+  let oldest = 0;
+  let missing = 0;
+  let withPrice = 0;
+  for (const b of list) {
+    if (!boxHasPrice(b)) continue;
+    withPrice++;
+    const t = readPriceTime(b);
+    if (!t) { missing++; continue; }
+    if (!newest || t.at > newest) newest = t.at;
+    if (!oldest || t.at < oldest) oldest = t.at;
+  }
+  const ageDays = newest ? (ts - newest) / 86400000 : null;
+  const fresh = !!newest && ageDays < days;
+  const detail = {
+    field: PRICE_TIME_FIELD,
+    boxes: list.length,
+    withPrice,
+    stamped: withPrice - missing,
+    missing,                                    // 有市价但没时间戳的盒子（老数据/没被核对过）
+    newestAt: newest ? new Date(newest).toISOString() : null,
+    oldestAt: oldest ? new Date(oldest).toISOString() : null,
+    ageDays: ageDays == null ? null : Math.round(ageDays * 10) / 10,
+    refreshDays: days,
+    fresh,
+    nextRunAt: newest ? new Date(newest + days * 86400000).toISOString() : null,
+    reason: fresh
+      ? `Box_Id.json 里市价最近一次核对是 ${Math.floor(ageDays)} 天前，未满 ${days} 天`
+      : (newest
+        ? `Box_Id.json 里市价最近一次核对是 ${Math.floor(ageDays)} 天前，已过 ${days} 天周期`
+        : 'Box_Id.json 里还没有市价核对时间戳，需要采一轮'),
+  };
+  return detail;
+}
+
 // 计算写回差异
 export function diffBoxes(boxes, prices) {
   const diffs = [];
@@ -512,21 +626,37 @@ export async function loadBoxes(cfg, token, source, explicitTarget, base) {
   let boxes;
   try { boxes = JSON.parse(file.text); } catch (e) { throw new Error('Box_Id.json 解析失败'); }
   if (!Array.isArray(boxes)) throw new Error('Box_Id.json 不是数组');
-  return { target, ref, file, boxes };
+  const refreshDays = ((cfg && cfg.prices && cfg.prices.crawl) || {}).refreshDays;
+  return { target, ref, file, boxes, freshness: priceFreshness(boxes, refreshDays) };
 }
 
-export async function writeBoxes(cfg, token, source, explicitTarget, base, boxes, file, diffs, title) {
+/**
+ * 写回 Box_Id.json 并开 PR。
+ * 会先给「本轮核对到的盒子」打上 market_priceUpdateTime，再序列化 —— 时间戳和价格
+ * 在同一个提交里，这样文件本身就是「上次什么时候核对过」的唯一真相。
+ * @param {object} [opts] { stampNames?: Set<string>, at?: string, stamp?: boolean }
+ */
+export async function writeBoxes(cfg, token, source, explicitTarget, base, boxes, file, diffs, title, opts) {
   const target = resolveTarget(cfg, source, explicitTarget);
   const ref = base || target.branch || 'main';
+  const o = opts || {};
+  let stamp = { stamped: 0, total: 0, at: null };
+  if (o.stamp !== false) {
+    stamp = stampPrices(boxes, o.at, { names: o.stampNames || null });
+  }
   const lines = diffs.slice(0, 80).map(d => `- ${d.boxId} ${d.name} ${d.elite}: ${d.from == null ? '∅' : d.from} → ${d.to}`);
   if (diffs.length > 80) lines.push(`- ...共 ${diffs.length} 条`);
-  return await commitAndOpenPR({
+  if (stamp.stamped) {
+    lines.push('', `已在 ${stamp.stamped} 个盒子上记录 \`${PRICE_TIME_FIELD}\` = ${stamp.at}`);
+  }
+  const pr = await commitAndOpenPR({
     target, token, base: ref,
     files: [{ path: BOX_FILE, content: JSON.stringify(boxes, null, 2), sha: file.sha }],
     title: title || `chore(prices): 更新市价 (${diffs.length} 处)`,
     body: ['由市价同步自动生成。', '', ...lines].join('\n'),
     branchPrefix: 'prices',
   });
+  return Object.assign({}, pr, { stamped: stamp.stamped, stampedAt: stamp.at, stampedTotal: stamp.boxesWithPrice });
 }
 
 export { BOX_FILE };
