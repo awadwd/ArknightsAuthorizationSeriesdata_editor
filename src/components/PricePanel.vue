@@ -154,13 +154,38 @@
           <div class="qd-kv"><span>下次可继续</span><b>{{ nextRunLabel }}</b></div>
         </div>
 
+        <div v-if="freshness" class="qd-time" :class="freshness.fresh ? 'ok' : 'due'">
+          <div class="qd-time-main">
+            <span class="qd-dot"></span>
+            <b>{{ freshness.fresh ? '这个月的市价已核对过' : '市价该更新了' }}</b>
+            <span class="qd-time-age">{{ freshness.ageDays == null ? '还没有记录' : freshness.ageDays + ' 天前' }}</span>
+          </div>
+          <div class="qd-time-sub">
+            <template v-if="freshness.mode === 'meta'">
+              一条总记录：<code>{{ freshness.file }}</code> → <code>{{ freshness.field }}</code>
+              = {{ freshness.newestAt ? fmtDate(freshness.newestAt) : '（还没写过）' }}；
+            </template>
+            <template v-else>
+              旧格式（按盒号记）：<code>{{ freshness.field }}</code>
+              {{ freshness.stamped }} / {{ freshness.withPrice }} 个盒子有时间戳<template v-if="freshness.missing">，{{ freshness.missing }} 个缺</template>；
+            </template>
+            周期 {{ freshness.refreshDays }} 天<template v-if="freshness.fresh">，下次 {{ fmtDate(freshness.nextRunAt) }}</template><template v-else-if="freshness.newestAt">，上次 {{ fmtDate(freshness.newestAt) }}</template>
+          </div>
+        </div>
+        <div v-if="freshness && !freshness.fresh" class="pr-alert info" style="margin-top:8px;">
+          抓取前只读这一处判断：<b>{{ freshness.reason }}</b>。所以现在点「立即继续抓取」才会真的去千岛。
+        </div>
+        <div v-else-if="freshness && freshness.fresh" class="form-hint" style="margin-top:8px;">
+          抓取任务会因为「没到周期」直接跳过，不会碰千岛。要提前更新就勾上下面的「忽略月周期」。
+        </div>
+
         <div v-if="crawl.present && crawl.series && crawl.series.length" class="form-hint" style="margin-top:6px;">
           涉及系列（{{ crawl.seriesCount }}）：{{ crawl.series.join('、') }}{{ crawl.seriesCount > crawl.series.length ? ' …' : '' }}
           <template v-if="!form.seriesFilter && crawl.seriesCount > 1">　⚠️ 多弹价格混在一起算，建议在上面「只取某一弹」里钉死一个</template>
         </div>
         <div v-if="crawl.lastError" class="pr-alert info" style="margin-top:10px;">{{ crawl.reason }}：{{ crawl.lastError }}</div>
         <div v-else-if="crawl.note" class="pr-alert info" style="margin-top:10px;">{{ crawl.note }}</div>
-        <div v-else-if="crawl.present" class="form-hint" style="margin-top:8px;">{{ crawl.reason }}</div>
+        <div v-else-if="crawl.present && !crawl.priceTimeGate" class="form-hint" style="margin-top:8px;">{{ crawl.reason }}</div>
 
         <div class="pr-bar">
           <button class="btn btn-primary" @click="crawlStep()" :disabled="crawlBusy">
@@ -170,7 +195,15 @@
             用它算价并预览
           </button>
           <button class="btn btn-secondary" @click="crawlReset" :disabled="crawlBusy || !crawl.present">重置任务</button>
+          <button class="btn btn-secondary" @click="stampPrices" :disabled="stampBusy || !isOwner"
+                  title="把「这一轮是什么时候核对的」写进 Price_Meta.json（只改这一个文件、一行时间）">
+            {{ stampBusy ? '记录中…' : '补记核对时间' }}
+          </button>
         </div>
+        <label class="qd-check-row">
+          <input type="checkbox" v-model="forceRefresh" />
+          <span>忽略月周期（强制重新核对市价；会真的去千岛抓一轮）</span>
+        </label>
       </div>
 
       <div class="panel">
@@ -390,6 +423,9 @@ export default {
       sessionDetected: null,
       crawl: { present: false },
       crawlBusy: false,
+      freshness: null,
+      forceRefresh: false,
+      stampBusy: false,
       previewFromCrawl: false,
       bundleText: '',
       savingSession: false,
@@ -483,6 +519,7 @@ export default {
         this.matrix = data.matrix || []
         this.session = (data.session && data.session.present) ? data.session : { present: false }
         this.crawl = data.crawl || { present: false }
+        this.freshness = data.freshness || null
         this.collectToken = data.collectToken || { set: false }
         const p = data.prices || {}
         this.islandId = p.islandId || '300569'
@@ -658,16 +695,25 @@ export default {
       }
     },
     async crawlStep() {
+      // 没到周期时先问一句，别让用户点完只看到「已跳过」
+      if (!this.forceRefresh && this.freshness && this.freshness.fresh) {
+        const days = this.freshness.ageDays
+        const cycle = this.freshness.refreshDays
+        if (!confirm(`Box_Id.json 里市价 ${days == null ? '' : days + ' 天前'}刚核对过（周期 ${cycle} 天），\n现在抓取会被跳过、也不会碰千岛。\n\n要强制核对一轮吗？`)) return
+        this.forceRefresh = true
+      }
       this.crawlBusy = true
       this.error = ''
       this.notice = ''
       try {
-        const { data } = await axios.post('/api/prices?action=crawl-step', { force: true })
+        const { data } = await axios.post('/api/prices?action=crawl-step', { force: this.forceRefresh })
         if (data.crawl) this.crawl = data.crawl
+        if (data.freshness) this.freshness = data.freshness
         if (data.ok === false && data.paused) {
           this.error = `${data.error}　→ 已暂停，${data.waitMinutes} 分钟后（或下次 cron）接着抓第 ${data.page} 页`
         } else if (data.skipped) {
-          this.notice = data.reason || '现在不需要抓'
+          this.hint = data.reason || '现在不需要抓'
+          this.notice = '已跳过，没有向千岛发请求'
         } else {
           this.notice = `本轮抓了 ${data.pages} 页、新增 ${data.added} 条，累计 ${data.records} 个商品`
             + (data.crawl && data.crawl.note ? '。' + data.crawl.note : '')
@@ -677,6 +723,36 @@ export default {
       } finally {
         this.crawlBusy = false
       }
+    },
+    // 一次性回填：只写 Price_Meta.json 这一条总记录（不动 Box_Id.json）
+    async stampPrices() {
+      if (!confirm('把「本轮市价是什么时候核对的」写成一条总记录（Price_Meta.json）？\n只改这一个文件、一行时间，会开一个 PR。\n如果市价刚刚更新过，点确定后 30 天内不会再自动抓。')) return
+      this.stampBusy = true
+      this.error = ''
+      this.notice = ''
+      try {
+        const { data } = await axios.post('/api/prices?action=stamp', {})
+        if (!data.success) throw new Error(data.error || '补记失败')
+        if (data.changed === false) {
+          this.notice = data.message || '已经有记录了'
+        } else {
+          this.freshness = data.after || this.freshness
+          this.prUrl = data.prUrl || ''
+          this.notice = `已记录 ${data.file || 'Price_Meta.json'}：${data.at}`
+            + (data.after ? `；下次更新 ${this.fmtDate(data.after.nextRunAt)}` : '')
+        }
+      } catch (e) {
+        this.error = '补记失败：' + ((e.response && e.response.data && e.response.data.error) || e.message)
+      } finally {
+        this.stampBusy = false
+      }
+    },
+    fmtDate(iso) {
+      if (!iso) return '—'
+      const d = new Date(iso)
+      if (isNaN(d.getTime())) return '—'
+      const p = n => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
     },
     async crawlReset() {
       if (!confirm('重置抓取任务？已攒下的记录会一起清掉（不会改动 Box_Id.json）。')) return
@@ -731,6 +807,8 @@ export default {
         minSamples: this.form.minSamples,
         outlierMad: this.form.outlierMad,
         elite1Ratio: this.form.elite1Ratio,
+        // 勾了「忽略月周期」才允许绕过 Box_Id.json 里的核对时间
+        force: this.forceRefresh,
       }
     },
     parsedSamples() {
@@ -836,8 +914,16 @@ export default {
         }
         const { data } = await axios.post('/api/prices?action=' + (fromCrawl ? 'crawl-apply' : 'apply'), body)
         if (!data || !data.success) throw new Error((data && data.error) || '应用失败')
+        if (data.skipped) {
+          this.hint = data.reason || '未到更新周期'
+          this.notice = '已跳过采集（Box_Id.json 里的核对时间还没到周期）；要现在就更新，请先勾上「忽略月周期」'
+          return
+        }
         this.prUrl = data.prUrl || ''
-        this.notice = data.changed === false ? '价格没有变化，未创建 PR' : '已创建 PR'
+        const stampNote = data.stamped ? `，同时记录了 ${data.stamped} 个盒子的核对时间` : ''
+        this.notice = data.changed === false
+          ? '价格没有变化，未创建 PR'
+          : `已创建 PR${stampNote}`
         this.previewFromCrawl = false
         await this.load()
       } catch (e) {
@@ -924,6 +1010,17 @@ export default {
 
 /* 自动抓取 */
 .qd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+/* 市价核对时间：整个月度节奏就看这一块 */
+.qd-time { margin-top: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid #e5e7eb; background: #f8fafc; }
+.qd-time.ok { background: #ecfdf5; border-color: #bbf7d0; color: #047857; }
+.qd-time.due { background: #fffbeb; border-color: #fde68a; color: #b45309; }
+.qd-time-main { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.qd-time-main b { font-weight: 700; }
+.qd-time-age { margin-left: auto; font-size: 12px; opacity: .85; }
+.qd-time-sub { margin-top: 5px; font-size: 11.5px; line-height: 1.7; color: #4b5563; }
+.qd-time-sub code { background: rgba(0,0,0,.05); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.qd-check-row { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12px; color: #374151; cursor: pointer; }
+.qd-check-row input { margin: 0; }
 .qd-kv { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; background: #f8fafc; border: 1px solid #eef1f5; }
 .qd-kv span { font-size: 11px; color: #6b7280; }
 .qd-kv b { font-size: 14px; color: #111827; }

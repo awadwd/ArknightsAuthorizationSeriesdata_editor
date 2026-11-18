@@ -123,9 +123,17 @@
             <div class="form-group">
               <label class="form-label">启用自动同步</label>
               <label class="switch">
-                <input type="checkbox" v-model="config.autoSync.enabled" />
+                <input type="checkbox" v-model="config.autoSync.enabled" @change="onAutoSyncToggle" />
                 <span class="slider"></span>
               </label>
+              <span class="form-hint" style="display:block;margin-top:6px;">
+                拨一下就直接存，不用再点页面底部的「保存配置」。
+              </span>
+              <div v-if="autoSyncErr" class="save-error" style="margin-top:6px;">{{ autoSyncErr }}</div>
+              <div v-else-if="autoSyncMsg" class="badge badge-connected" style="margin-top:6px;">{{ autoSyncMsg }}</div>
+              <div class="form-hint" style="margin-top:6px;" v-if="serverAutoSyncText">
+                服务端当前：<b>{{ serverAutoSyncText }}</b>
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label">同步间隔（分钟）</label>
@@ -156,6 +164,7 @@
             </div>
             <div class="sync-health-row" v-if="syncStatus.deploy && syncStatus.deploy.ok">部署钩子：已触发 Pages 重建</div>
             <div class="sync-health-row" v-if="syncStatus.deploy && syncStatus.deploy.skipped">部署钩子：未配置（仓库更新后需等 Pages 自己重建）</div>
+            <div class="sync-health-row text-danger" v-if="syncStatus.skipped">上次定时任务被跳过：{{ syncStatus.skipReason }}</div>
             <div class="sync-health-row text-danger" v-if="syncStatus.pushError">推送错误：{{ syncStatus.pushError }}</div>
           </div>
 
@@ -172,6 +181,8 @@
           </div>
 
           <div class="sync-scheduler">
+            自动同步：<span :class="config.autoSync.enabled ? 'ok' : 'bad'">{{ config.autoSync.enabled ? '已启用（定时任务会跑）' : '已停用（定时任务会跳过）' }}</span>
+            ·
             定时触发：<span :class="scheduler.syncTokenConfigured ? 'ok' : 'bad'">{{ scheduler.syncTokenConfigured ? 'SYNC_TOKEN 已配置' : 'SYNC_TOKEN 未配置' }}</span>
             ·
             部署钩子：<span :class="scheduler.deployHookConfigured ? 'ok' : 'bad'">{{ scheduler.deployHookConfigured ? '已配置' : '未配置' }}</span>
@@ -243,6 +254,8 @@
 import axios from 'axios'
 import { getAdminConfig, setAdminConfig } from '../api/config'
 
+const PENDING_KEY = 'auto_sync_pending_v1'
+
 export default {
   name: 'AdminConfig',
   data() {
@@ -274,7 +287,35 @@ export default {
       tableSaving: false,
       tableMsg: '',
       tableError: '',
+      // 自动同步开关：独立保存通道 + 服务端回显
+      autoSyncMsg: '',
+      autoSyncErr: '',
+      savingAutoSync: false,
+      // 刚写进去、但服务端可能还没刷出来的值：{ enabled, at }
+      pendingAutoSync: null,
+      serverAutoSync: null,
     }
+  },
+  computed: {
+    serverAutoSyncText() {
+      const s = this.serverAutoSync
+      if (!s) return ''
+      const state = s.enabled ? '已启用' : '已停用'
+      const at = s.savedAt ? '（配置写入于 ' + this.formatTime(s.savedAt) + '）' : ''
+      return state + at
+    },
+  },
+  async created() {
+    // 待确认的写入要跨刷新活着：用户拨完开关马上按 F5 是最常见的操作，
+    // 如果只存在内存里，刷新后就没法分辨「服务端没存下」和「KV 缓存还没刷」。
+    try {
+      const raw = localStorage.getItem(PENDING_KEY)
+      if (raw) {
+        const p = JSON.parse(raw)
+        if (p && p.at && Date.now() - p.at < 5 * 60 * 1000) this.pendingAutoSync = p
+        else localStorage.removeItem(PENDING_KEY)
+      }
+    } catch (e) {}
   },
   async mounted() {
     const tok = localStorage.getItem('gh_token') || ''
@@ -304,7 +345,10 @@ export default {
   },
   methods: {
     normalize(raw) {
+      // 以服务端返回的对象为底：prices / crawl / collectToken 这些本页不编辑的块必须原样留着，
+      // 否则「保存配置」一次就把它们从 KV 里冲掉（采集令牌会连带失效）。
       return {
+        ...raw,
         repoConfigs: {
           github: { owner: '', repo: '', branch: 'dev', ...(raw.repoConfigs && raw.repoConfigs.github || {}) },
           gitcode: { owner: '', repo: '', branch: 'dev', ...(raw.repoConfigs && raw.repoConfigs.gitcode || {}) },
@@ -340,8 +384,25 @@ export default {
       try {
         const data = await getAdminConfig()
         if (data && data.success && data.config) {
-          this.config = this.normalize(data.config)
-          this.editorFilesText = (this.config.editorFiles || []).join('\n')
+          const cfg = this.normalize(data.config)
+          const serverEnabled = !!(data.config.autoSync && data.config.autoSync.enabled)
+          const savedAt = data.savedAt ? Date.parse(data.savedAt) : 0
+          const pending = this.pendingAutoSync
+          if (pending) {
+            if (serverEnabled === pending.enabled) {
+              // 服务端已经能看到这次的写入，确认完成
+              this.setPending(null)
+            } else if (!savedAt || savedAt < pending.at) {
+              // 读回来的还是我们写入之前那份（KV 边缘缓存最长 60 秒）。
+              // 这里绝不能用旧值把刚拨的开关顶掉——那正是「一刷新又关掉了」。
+              cfg.autoSync.enabled = pending.enabled
+              this.autoSyncErr = ''
+              this.autoSyncMsg = '开关已写入服务端，但这次读到的还是缓存里的旧配置（KV 边缘缓存最长 60 秒），稍后刷新即为新值。'
+            }
+          }
+          this.config = cfg
+          this.editorFilesText = (cfg.editorFiles || []).join('\n')
+          this.serverAutoSync = { enabled: serverEnabled, savedAt: data.savedAt || null }
         } else {
           this.loadError = '获取配置失败：' + ((data && data.error) || '未知错误')
         }
@@ -350,6 +411,56 @@ export default {
       } finally {
         this.loading = false
       }
+    },
+    // 自动同步开关：拨一下立刻存，不依赖页面底部的「保存配置」。
+    // 前端只发 patch（autoSync 三个字段），不会把 prices / 采集令牌一起冲掉。
+    async onAutoSyncToggle() {
+      if (!this.config || !this.config.autoSync) return
+      const enabled = !!this.config.autoSync.enabled
+      this.savingAutoSync = true
+      this.autoSyncErr = ''
+      this.autoSyncMsg = ''
+      try {
+        const { data } = await axios.post('/api/admin/config', {
+          patch: {
+            autoSync: {
+              enabled,
+              intervalMinutes: this.config.autoSync.intervalMinutes,
+              staleMinutes: this.config.autoSync.staleMinutes,
+            },
+          },
+        })
+        if (!data || !data.success) throw new Error((data && data.error) || '保存失败')
+        const echoed = !!(data.autoSync && data.autoSync.enabled)
+        const at = data.savedAt ? Date.parse(data.savedAt) : Date.now()
+        this.serverAutoSync = { enabled: echoed, savedAt: data.savedAt || null }
+        if (echoed !== enabled) {
+          // 服务端回显跟拨的不一致：说明真的没存进去，别假装成功
+          this.autoSyncErr = '服务端回显为「' + (echoed ? '启用' : '停用') + '」，与刚刚的操作不一致，请再拨一次'
+          this.config.autoSync.enabled = echoed
+          this.setPending(null)
+        } else {
+          this.setPending({ enabled, at })
+          this.autoSyncMsg = enabled ? '✓ 已启用，已写入服务端' : '✓ 已停用，已写入服务端'
+          setTimeout(() => { this.autoSyncMsg = '' }, 6000)
+        }
+      } catch (e) {
+        const msg = (e.response && e.response.data && e.response.data.error) || e.message
+        this.autoSyncErr = '保存失败：' + msg
+        // 回弹到服务端认定的状态，避免用户以为已经生效
+        this.config.autoSync.enabled = !enabled
+        this.setPending(null)
+      } finally {
+        this.savingAutoSync = false
+      }
+    },
+    // 记住「我刚写进去、但服务端可能还没刷出来」的值（跨刷新有效）
+    setPending(p) {
+      this.pendingAutoSync = p
+      try {
+        if (p) localStorage.setItem(PENDING_KEY, JSON.stringify(p))
+        else localStorage.removeItem(PENDING_KEY)
+      } catch (e) {}
     },
     async loadSyncStatus() {
       try {
@@ -362,6 +473,13 @@ export default {
           if (data.autoSync && this.config) {
             this.config.autoSync.lastRunAt = data.autoSync.lastRunAt
             this.config.autoSync.lastTrigger = data.autoSync.lastTrigger
+            // 只有在没有待确认写入时才用它刷新「服务端当前」，避免旧缓存盖掉刚拨的开关
+            if (!this.pendingAutoSync) {
+              this.serverAutoSync = {
+                enabled: !!data.autoSync.enabled,
+                savedAt: data.autoSync.savedAt || null,
+              }
+            }
           }
         }
       } catch (e) {}
@@ -472,9 +590,24 @@ export default {
       this.saveSuccess = false
       this.saveError = ''
       try {
-        const data = await setAdminConfig(this.config)
+        // 本页不管 prices（千岛令牌 / 抓取进度在「市价」页维护），
+        // 所以发送前摘掉：服务端按 patch 合并，没传的块保持原样。
+        const payload = { ...this.config }
+        delete payload.prices
+        delete payload._savedAt
+        const data = await setAdminConfig(payload)
         if (data && data.success) {
           this.saveSuccess = true
+          if (data.savedAt) {
+            this.setPending({
+              enabled: !!(this.config.autoSync && this.config.autoSync.enabled),
+              at: Date.parse(data.savedAt) || Date.now(),
+            })
+            this.serverAutoSync = {
+              enabled: !!(data.autoSync && data.autoSync.enabled),
+              savedAt: data.savedAt,
+            }
+          }
           setTimeout(() => { this.saveSuccess = false }, 3000)
         } else {
           this.saveError = (data && data.error) || '保存失败'

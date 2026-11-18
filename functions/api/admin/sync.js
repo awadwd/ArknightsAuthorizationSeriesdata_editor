@@ -37,8 +37,26 @@ async function runSync(context, opts) {
   const o = opts;
   const cfg = await getAppConfig(env);
   const syncCfg = (cfg && cfg.autoSync) || {};
+  const enabled = syncCfg.enabled !== false;
   const tables = (Array.isArray(o.tables) && o.tables.length) ? o.tables
     : ((syncCfg.tables && syncCfg.tables.length) ? syncCfg.tables : KC_TABLES);
+
+  // 「启用自动同步」这个开关必须真的有作用，否则它只是个装饰。
+  // 只拦定时任务（chron）；人手点的「立即同步」照跑——人已经明确要求了。
+  if (o.machine && !enabled) {
+    const prev = await readStatus(env);
+    const skipped = Object.assign({}, prev || {}, {
+      skipped: true,
+      skipReason: 'autoSync.enabled=false（配置页里已停用自动同步）',
+      checkedAt: new Date().toISOString(),
+      enabled: false,
+      trigger: 'scheduler',
+    });
+    try {
+      if (env.AUTH_STORE) await env.AUTH_STORE.put('sync:status', JSON.stringify(skipped));
+    } catch (e) {}
+    return skipped;
+  }
 
   const kcData = {};
   const results = [];
@@ -90,6 +108,8 @@ async function runSync(context, opts) {
     triggeredBy: o.triggeredBy || 'unknown',
     trigger: o.machine ? 'scheduler' : 'manual',
     source: 'knowcloud',
+    enabled,
+    skipped: false,
     durationMs: Date.now() - startedAll,
     results,
     stats,

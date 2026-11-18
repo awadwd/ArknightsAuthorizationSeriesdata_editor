@@ -46,6 +46,8 @@ export async function onRequestGet(context) {
         lastRunAt: autoSync.lastRunAt || status.lastRunAt || null,
         lastTrigger: autoSync.lastTrigger || null,
         lastChanged: autoSync.lastChanged == null ? null : !!autoSync.lastChanged,
+        // 配置最后一次写入时间：前端用它判断自己刚保存的开关是不是还没刷到
+        savedAt: (cfg && cfg._savedAt) || null,
       },
       // 是否配置了机器触发（前端据此提示"自动同步已可用 / 还需配置 SYNC_TOKEN"）
       scheduler: {

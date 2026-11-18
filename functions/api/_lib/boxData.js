@@ -26,7 +26,12 @@ export function hash(str) {
 
 // 指纹：只取影响展示与搜索的字段，剔除时间戳类字段，避免无意义的版本抖动
 export function fingerprint(box) {
-  const skip = { updatedAt: 1, updateTime: 1, lastModified: 1 };
+  // market_priceUpdateTime 是「市价核对时间」，一个月才动一次；把它算进指纹会让
+  // 客户端因为「只是记了个时间」就整包重下 158KB。
+  const skip = {
+    updatedAt: 1, updateTime: 1, lastModified: 1,
+    market_priceUpdateTime: 1, market_priceUpdatetime: 1, market_price_update_time: 1, marketPriceUpdateTime: 1,
+  };
   const keys = Object.keys(box).filter((k) => !skip[k]).sort();
   const parts = [];
   for (const k of keys) {
