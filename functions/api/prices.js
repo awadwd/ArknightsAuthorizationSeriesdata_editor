@@ -401,7 +401,7 @@ export async function onRequestPost(context) {
 
   // ── 抓取任务：慢速分页 + 退避 + 断点续跑（cron 与手动共用）─────────────────
   if (action === 'crawl-step') {
-    // 月度节奏以 Box_Id.json 里的 market_priceUpdateTime 为准：
+    // 月度节奏以 Price_Meta.json 里的 market_priceUpdateTime 为准（一条总记录）：
     // 先问任务状态机「现在该继续吗」，它说该跑了，再花一次读文件确认——
     // 文件里的时间戳没到周期就直接跳过，一个请求都不发给千岛。
     let freshness = null;
