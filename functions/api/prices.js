@@ -17,9 +17,9 @@ import { getAppConfig, saveAppConfig } from './_lib/appConfig.js';
 import { verifyRequest } from './_lib/auth.js';
 import { verifySyncRequest, syncCors } from './_lib/syncAuth.js';
 import {
-  loadBoxes, writeBoxes, fetchQiandao, aggregate, diffBoxes, buildNameIndex, normalizeSamples,
+  loadBoxes, writeBoxes, writePriceMeta, fetchQiandao, aggregate, diffBoxes, buildNameIndex, normalizeSamples,
   resolveSamples, filterRecords, extractRecords, eliteFromTitle,
-  priceFreshness, stampPrices, PRICE_TIME_FIELD,
+  priceFreshness, buildPriceMeta, PRICE_TIME_FIELD, PRICE_META_FILE,
 } from './_lib/prices.js';
 import { saveSession, getSession, clearSession, sessionStatus, qdRequest, pickReplayApis } from './_lib/qiandao.js';
 import { getJob, saveJob, resetJob, runStep, shouldRun, jobSummary, seedRecords } from './_lib/crawl.js';
@@ -40,6 +40,14 @@ function maskHeaders(h) {
 
 const FRESH_KEY = 'price_freshness';
 const FRESH_TTL_MS = 10 * 60 * 1000;
+
+function boxHasAnyPrice(b) {
+  for (let i = 1; i <= 10; i++) {
+    const mp = b['character' + i] && b['character' + i].market_price;
+    if (mp && (mp.ELITE1 != null || mp.ELITE2 != null)) return true;
+  }
+  return false;
+}
 
 // 读 Box_Id.json 判断市价新不新鲜，给 crawl-step / apply 当前置闸门。
 // 读失败（token 没权限、文件不见了）就返回 null，表示「不拦」，让抓取照常进行——
@@ -431,9 +439,9 @@ export async function onRequestPost(context) {
     }, r.ok || r.skipped ? 200 : 200);
   }
 
-  // ── 给现有的 Box_Id.json 补记市价核对时间（一次性回填）──────────────────────
-  // 老数据里没有 market_priceUpdateTime，第一次接上这套逻辑时要先补一份，
-  // 否则会被判成「从未核对过」而立刻触发抓取。
+  // ── 记录「市价这一轮是什么时候核对的」（一个月一条总记录）────────────────
+  // 只写 Price_Meta.json 这一个文件，Box_Id.json 一行都不动：
+  // 一轮抓取是全量覆盖，95 个盒子写同一个时间只是在制造 diff 噪声。
   if (action === 'stamp') {
     if (machineAuth && machineAuth.machine) return json({ success: false, error: '机器账号不能回填时间戳' }, 403);
     let loaded0;
@@ -442,27 +450,28 @@ export async function onRequestPost(context) {
     } catch (e) {
       return json({ success: false, error: e.message }, 500);
     }
-    const at = body.at ? new Date(body.at).toISOString() : new Date().toISOString();
+    const at = body.at ? new Date(Date.parse(body.at) || Date.now()).toISOString() : new Date().toISOString();
     const dry = !!body.dryRun;
-    const plan = JSON.parse(JSON.stringify(loaded0.boxes));
-    const res = stampPrices(plan, at, {});
+    const boxes = (loaded0.boxes || []).filter(boxHasAnyPrice);
+    const refreshDays = ((cfg.prices || {}).crawl || {}).refreshDays;
+    const previewMeta = buildPriceMeta({ at, by: 'manual', boxes: boxes.length });
     const before = loaded0.freshness;
+    const after = priceFreshness(previewMeta, refreshDays);
     if (dry) {
-      return json({ success: true, dryRun: true, at, ...res, before, after: priceFreshness(plan, ((cfg.prices || {}).crawl || {}).refreshDays) });
-    }
-    if (!res.stamped) {
-      return json({ success: true, changed: false, ...res, freshness: before, message: '所有盒子都已带时间戳，无需回填' });
+      return json({ success: true, dryRun: true, at, file: PRICE_META_FILE, meta: previewMeta, before, after });
     }
     try {
-      const pr = await writeBoxes(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base,
-        plan, loaded0.file, [],
-        `chore(prices): 回填市价核对时间 ${at.slice(0, 10)}（${res.stamped} 个盒子）`,
-        { at, stamp: false });   // 上面已经打过，这里别再打一次（时间才一致）
+      const pr = await writePriceMeta(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base, {
+        at,
+        by: 'manual',
+        boxes: boxes.length,
+        metaFile: loaded0.metaFile,
+        title: body.title || `chore(prices): 记录市价核对时间 ${at.slice(0, 10)}`,
+      });
       return json({
-        success: true, changed: true, at, stamped: res.stamped, boxesWithPrice: res.boxesWithPrice,
+        success: true, changed: true, at, file: PRICE_META_FILE,
         prUrl: pr.url, prNumber: pr.number,
-        before,
-        after: priceFreshness(plan, ((cfg.prices || {}).crawl || {}).refreshDays),
+        before, after,
       });
     } catch (e) {
       return json({ success: false, error: e.message }, 500);
@@ -543,11 +552,17 @@ export async function onRequestPost(context) {
   const working = JSON.parse(JSON.stringify(boxes));
   const diffs = diffBoxes(working, agg.prices);
 
-  // 时间戳和价格一起写：本轮匹配到的干员所在的盒子，都记上「这次核对过」。
-  // 只打一次时间（stampedAt），预览和写回用同一个值，避免两次调用差几毫秒。
+  // 本轮核对时间只留一条：写进 Price_Meta.json，不往 95 个盒子上各贴一遍。
+  // 预览和写回用同一个值（stampedAt），避免两次调用差几毫秒。
   const stampedAt = new Date().toISOString();
   const isPreviewAction = action === 'preview' || action === 'samples' || action === 'manual' || action === 'crawl-preview';
-  const stampRes = stampPrices(working, stampedAt, { names: new Set(Object.keys(agg.prices)) });
+  const metaPreview = buildPriceMeta({
+    at: stampedAt,
+    by: got.source === 'crawl' ? 'qiandao-crawl' : 'qiandao',
+    boxes: working.filter(boxHasAnyPrice).length,
+    records: got.recordsCount || got.samples.length,
+    characters: Object.keys(agg.prices).length,
+  });
 
   const summary = {
     provider: got.provider,
@@ -561,7 +576,7 @@ export async function onRequestPost(context) {
     relaxedKeyword: !!got.relaxedKeyword,
     matchedCharacters: Object.keys(agg.prices).length,
     diffs: diffs.length,
-    priceTime: { field: PRICE_TIME_FIELD, at: stampedAt, stamped: stampRes.stamped, boxesWithPrice: stampRes.boxesWithPrice },
+    priceTime: { file: PRICE_META_FILE, field: PRICE_TIME_FIELD, at: stampedAt },
     freshness,
     stats: agg.stats.slice(0, 200),
     errors: got.errors || [],
@@ -579,18 +594,13 @@ export async function onRequestPost(context) {
 
   if (action !== 'apply' && action !== 'crawl-apply') return json({ success: false, error: '未知 action: ' + action }, 400);
 
-  // 价格没变但时间戳要更新（本轮确实核对过）时仍然写回 —— 这样「一个月一轮」才有依据，
-  // 否则文件里的时间戳永远停在最后一次真的改价那天，下个月会被判成过期而重抓。
-  if (!diffs.length && !stampRes.stamped) {
-    return json({ success: true, ...summary, changed: false, message: '市价没有变化，未创建 PR' });
-  }
-
   try {
     const pr = await writeBoxes(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base, working, file, diffs,
       diffs.length
         ? `chore(prices): 更新市价 (${diffs.length} 处) @ ${stampedAt}`
         : `chore(prices): 核对市价（无变化，仅记录时间） @ ${stampedAt}`,
-      { at: stampedAt, stamp: false });   // 时间戳上面已经打过，别打第二次
+      // 时间戳跟着这次 PR 一起写进 Price_Meta.json；Box_Id.json 只有价格变化
+      { at: stampedAt, by: metaPreview.updatedBy, records: metaPreview.records, characters: metaPreview.characters, metaFile: loaded.metaFile });
     try {
       await saveAppConfig(env, Object.assign({}, cfg, {
         prices: Object.assign({}, cfg.prices || {}, { lastRunAt: stampedAt, lastResult: { ...summary, prUrl: pr.url, count: diffs.length } }),
@@ -607,7 +617,7 @@ export async function onRequestPost(context) {
     return json({
       success: true, ...summary, changed: true,
       priceChangeCount: diffs.length,
-      stamped: stampRes.stamped,
+      priceMetaAt: pr.metaAt || stampedAt,
       prUrl: pr.url, prNumber: pr.number,
     });
   } catch (e) {

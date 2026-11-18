@@ -117,7 +117,25 @@ export async function saveAppConfig(env, cfg) {
   if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
     throw new Error('config must be a non-null object');
   }
+  if (!env || !env.AUTH_STORE) throw new Error('AUTH_STORE 未绑定，无法保存配置');
   await env.AUTH_STORE.put('config', JSON.stringify(cfg));
+  return cfg;
+}
+
+// 局部更新：把 patch 深合并进「当前配置」再写回。
+// 为什么必须这样：前端配置页只认识 repoConfigs/editorFiles/oauth/pr/feedback/autoSync 这几块，
+// 整包 POST 上去会把 prices（含 qiandao 采集令牌、crawl 进度）整块抹掉，
+// 表现为「改完一个开关，采集令牌就失效了」。走 patch 就只动真的改了的键。
+// 写入时间戳 `_savedAt` 一并落盘：读取端据此判断「读回来的到底是不是我刚写的那份」。
+export async function patchAppConfig(env, patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    throw new Error('patch must be a non-null object');
+  }
+  const cur = await getAppConfig(env);
+  const next = deepMerge(clone(cur), patch);
+  next._savedAt = new Date().toISOString();
+  await saveAppConfig(env, next);
+  return next;
 }
 
 // Simple JSON deep clone (CF Workers runtime 无 structuredClone，2024 仍部分支持，用 JSON 兜底最稳)

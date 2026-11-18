@@ -328,25 +328,35 @@ JSON 塞进剪贴板）。
 状态存在 KV 的 `qiandao_crawl`：`{ phase, page, records[], attempts, nextRunAt, delayMs }`。
 `records` 按 SPU id 去重，所以翻页重叠、反复重试都只是覆盖，不会重复累加。
 
-### 「上次核对是什么时候」写在 Box_Id.json 里
+### 「上次核对是什么时候」只记一条：`Price_Meta.json`
 
-`Box_Id.json` 是纯数组，没有地方放文件级的更新时间，所以时间戳记在**每个盒子**上：
+一轮抓取是全量覆盖，95 个盒子写的是同一个时间，所以时间**只留一条总记录**，
+放在仓库根目录的 `Price_Meta.json`：
 
 ```json
-{ "Box_id": "1.0", ..., "market_priceUpdateTime": "2026-11-18T01:27:00.000Z" }
+{
+  "market_priceUpdateTime": "2026-11-18T01:27:00.000Z",
+  "updatedBy": "qiandao",
+  "boxes": 95,
+  "records": 1234,
+  "characters": 240
+}
 ```
 
-- 语义是「这个盒子的市价**最后一次被核对**」，不是「最后一次改价」——价格没变但确实核过了，也会刷新；
-- 写回时只给**本轮真的匹配到样本**的盒子打时间戳，没核对到的不动，避免把旧价标成新；
+- 语义是「市价**最后一次被整轮核对**」，不是「最后一次改价」——价格没变但确实核过了，也会刷新；
+- 写回时这个文件和 `Box_Id.json` 在**同一个 PR** 里提交：价格有变化才改 `Box_Id.json`，
+  时间永远只动这一行。所以每月 PR 的 diff 就是「改了几个价」+「一行时间」，不再有 95 行噪声；
 - 读取兼容 `market_priceUpdatetime` / `market_price_update_time` / `marketPriceUpdateTime` 几种写法；
-- `/api/box-data/manifest` 的指纹计算**跳过**这个字段，所以「只记了个时间」不会让客户端整包重下 158KB。
+- 老数据兼容：`Price_Meta.json` 不存在时，退回读 `Box_Id.json` 里盒级的 `market_priceUpdateTime`
+  （上一版就是这么记的），取其中最新的一条判断周期——历史 PR 不用回滚。
 
-**月度节奏只认这一处**：`crawl-step` 与 `apply` 会先读 `Box_Id.json`，把最新的 `market_priceUpdateTime`
-和 `refreshDays` 比一下，没到周期就直接返回 `skipped`，**一个请求都不发给千岛**。
-想提前更新：面板上勾「忽略月周期」（等价于请求里带 `force: true`）。
+**月度节奏只认这一处**：`crawl-step` 与 `apply` 会先读 `Price_Meta.json`，把
+`market_priceUpdateTime` 和 `refreshDays` 比一下，没到周期就直接返回 `skipped`，
+**一个请求都不发给千岛**。想提前更新：面板上勾「忽略月周期」（等价于请求里带 `force: true`）。
 
-老数据第一次接上时没有这个字段，会被判成「从未核对过」而立刻触发抓取。先点一次
-「自动抓取 → 补记核对时间」（`action=stamp`，会开一个只加时间戳的 PR），或者等第一轮抓完自动补上。
+还没有这个文件时会被判成「从未核对过」而立刻触发抓取。先点一次
+「自动抓取 → 补记核对时间」（`action=stamp`，只写 `Price_Meta.json` 一个文件、开一个 PR），
+或者等第一轮抓完自动写下第一份。
 
 ⚠️ `acw_sc__v2` 只有约 1 小时寿命，所以**抓到 cookie 当天就把这一轮跑完**（几页、几分钟）。
 一个月后再跑时 cookie 早过期了，任务会停在 `blocked` 等你重抓一次——这是 WAF 的硬约束，绕不过去。
@@ -356,7 +366,8 @@ JSON 塞进剪贴板）。
 1. **来源**三选一：`千岛行情` / `手工价表`（`{ 干员名: { ELITE1, ELITE2 } }`，永远可用）/ `导入`（JSON 或 `name,elite,price` CSV）。
 2. **聚合**：同一干员+精英化取中位数，按 MAD 剔除离谱报价；样本数 < `minSamples` 不覆盖旧价
    （SPU 报价本身是权威值，默认 1；走标题解析时建议 3+）。只有单边价格时默认**不**用比例推算另一边。
-3. **写回**：改 `market_price` 的同时写 `market_priceUpdateTime`，走 PR（分支前缀 `prices/`），PR 描述里带涨跌清单。
+3. **写回**：只改 `market_price`，同时在 `Price_Meta.json` 里写一条 `market_priceUpdateTime`，
+   走同一个 PR（分支前缀 `prices/`），PR 描述里带涨跌清单。
    价格保留两位小数（`39.27` 不会被抹成 `39`）。
 4. **匹配**：SPU 名先做精确名匹配，落不到再按标题包含匹配，避免「阿米娅」吃掉「阿米娅(近卫)」。
    匹配不上的记在 `unmatched` 里。

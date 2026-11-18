@@ -478,30 +478,54 @@ export function aggregate(samples, opts) {
   return { prices, stats };
 }
 
-// ── 市价核对时间戳 ───────────────────────────────────────────────────────
-// Box_Id.json 是纯数组，没有地方放「文件级更新于 X」，所以时间戳记在每个盒子上：
-//   box.market_priceUpdateTime = '2026-11-18T05:36:00.000Z'
-// 语义是「这个盒子的市价最后一次被核对（无论数值有没有变）的时间」。
+// ── 市价核对时间 ─────────────────────────────────────────────────────────
+// 只记一条总记录：仓库根目录的 Price_Meta.json
+//   { "market_priceUpdateTime": "2026-11-18T05:36:00.000Z", "boxes": 95, "records": 1234 }
 //
-// 月度节奏由它决定：抓取前先读一遍文件，只有最新时间戳超过 refreshDays 才值得采一轮，
-// 否则直接跳过 —— 不再依赖 KV 里的任务状态（那是给「断点续跑」用的，不是给周期用的）。
+// 为什么不按盒号记：一轮抓取是全量覆盖，95 个盒子写的是同一个时间，
+// 只让 Box_Id.json 多出 95 行噪声、每月 PR diff 变得没法看，信息量还是那一个时间点。
+//
+// 月度节奏由它决定：抓取前先读这个文件，只有超过 refreshDays 才值得采一轮。
+// 兼容老数据：文件不存在时，退回读 Box_Id.json 里盒级的 market_priceUpdateTime
+// （之前那一版就是这么记的），所以历史 PR 留着也不会失效。
 export const PRICE_TIME_FIELD = 'market_priceUpdateTime';
+export const PRICE_META_FILE = 'Price_Meta.json';
 
 // 兼容历史/手写变体，读的时候全都认；写的时候统一用 PRICE_TIME_FIELD
 const PRICE_TIME_ALIASES = [
   PRICE_TIME_FIELD, 'market_priceUpdatetime', 'market_price_update_time', 'marketPriceUpdateTime',
 ];
 
-export function readPriceTime(box) {
-  if (!box || typeof box !== 'object') return null;
+function pickTime(obj) {
+  if (!obj || typeof obj !== 'object') return null;
   for (const k of PRICE_TIME_ALIASES) {
-    const v = box[k];
+    const v = obj[k];
     if (v == null || v === '') continue;
     const t = typeof v === 'number' ? v : Date.parse(String(v));
     if (!isFinite(t)) continue;
     return { raw: v, at: t, iso: new Date(t).toISOString() };
   }
   return null;
+}
+
+// 兼容旧签名：从单个盒子对象上取时间（文件级 meta 也走同一个函数）
+export function readPriceTime(obj) {
+  return pickTime(obj);
+}
+
+// 组装要写盘的那一条记录
+export function buildPriceMeta(opts) {
+  const o = opts || {};
+  const at = o.at ? new Date(Date.parse(o.at) || Date.now()).toISOString() : new Date().toISOString();
+  return {
+    _comment: '市价整轮核对记录。只保留这一条总记录，不要按盒号分散写进 Box_Id.json。',
+    [PRICE_TIME_FIELD]: at,
+    updatedBy: o.by || 'qiandao',
+    boxes: o.boxes == null ? null : Number(o.boxes),
+    records: o.records == null ? null : Number(o.records),
+    characters: o.characters == null ? null : Number(o.characters),
+    note: o.note || null,
+  };
 }
 
 function boxHasPrice(box) {
@@ -515,68 +539,48 @@ function boxHasPrice(box) {
   return false;
 }
 
-function boxHasAnyOf(box, names) {
-  if (!names) return true;
-  for (let i = 1; i <= 10; i++) {
-    const c = box['character' + i];
-    if (c && c.name && names.has(c.name)) return true;
-  }
-  return false;
-}
-
 /**
- * 给本轮核对过的盒子打时间戳。
- * @param {Array} boxes  Box_Id.json 数组（会被就地修改）
- * @param {string} at     ISO 时间，默认现在
- * @param {{names?: Set<string>}} opts  names = 本轮拿到样本的干员名；不传=所有有市价的盒子
- * @returns {{stamped:number, boxesWithPrice:number, at:string}}
+ * 这份数据新不新鲜。第一个参数可以是两种东西：
+ *   - Price_Meta.json 的内容（对象，一条总记录）→ 最准，也是现在的唯一写入口
+ *   - Box_Id.json 的盒子数组 → 兼容上一版按盒号记的时间戳（取其中最新的一条）
+ *
+ * 口径取「最新」而不是「最旧」：一轮抓取是全量覆盖，跑完只会有一个时间点；
+ * 用最新值判断既满足「一月一轮」，也不会因为冷门盒永远匹配不到样本而每半小时重开一轮。
  */
-export function stampPrices(boxes, at, opts) {
-  const iso = at ? new Date(Date.parse(at) || Date.now()).toISOString() : new Date().toISOString();
-  const names = (opts && opts.names) || null;
-  let stamped = 0;
-  let total = 0;
-  for (const b of boxes) {
-    if (!boxHasPrice(b)) continue;
-    total++;
-    if (!boxHasAnyOf(b, names)) continue;       // 本轮没核对到这个盒子，别动它的时间戳
-    if (b[PRICE_TIME_FIELD] === iso) continue;
-    b[PRICE_TIME_FIELD] = iso;
-    stamped++;
-  }
-  return { stamped, boxesWithPrice: total, at: iso };
-}
-
-/**
- * 这份文件的市价新不新鲜。
- * 口径刻意取「最新」而不是「最旧」：一轮抓取是全量覆盖，跑完写回后所有被覆盖的盒子
- * 都是同一个时间；用最新值判断既能实现「一月一轮」，又不会因为冷门盒永远匹配不到样本
- * 而陷入「每 30 分钟重开一轮」。
- */
-export function priceFreshness(boxes, refreshDays, now) {
+export function priceFreshness(source, refreshDays, now) {
   const ts = now || Date.now();
   const days = Number(refreshDays) > 0 ? Number(refreshDays) : 30;
-  const list = Array.isArray(boxes) ? boxes : [];
   let newest = 0;
   let oldest = 0;
   let missing = 0;
   let withPrice = 0;
-  for (const b of list) {
-    if (!boxHasPrice(b)) continue;
-    withPrice++;
-    const t = readPriceTime(b);
-    if (!t) { missing++; continue; }
-    if (!newest || t.at > newest) newest = t.at;
-    if (!oldest || t.at < oldest) oldest = t.at;
+  let mode = 'meta';
+
+  if (Array.isArray(source)) {
+    mode = 'legacy-boxes';
+    for (const b of source) {
+      if (!boxHasPrice(b)) continue;
+      withPrice++;
+      const t = readPriceTime(b);
+      if (!t) { missing++; continue; }
+      if (!newest || t.at > newest) newest = t.at;
+      if (!oldest || t.at < oldest) oldest = t.at;
+    }
+  } else {
+    const t = pickTime(source);
+    if (t) { newest = t.at; oldest = t.at; }
   }
+
   const ageDays = newest ? (ts - newest) / 86400000 : null;
   const fresh = !!newest && ageDays < days;
-  const detail = {
+  return {
     field: PRICE_TIME_FIELD,
-    boxes: list.length,
-    withPrice,
-    stamped: withPrice - missing,
-    missing,                                    // 有市价但没时间戳的盒子（老数据/没被核对过）
+    file: mode === 'meta' ? PRICE_META_FILE : 'Box_Id.json',
+    mode,                                        // meta = 一条总记录；legacy-boxes = 旧的按盒号记
+    boxes: mode === 'meta' ? (source && source.boxes != null ? Number(source.boxes) : null) : source.length,
+    withPrice: mode === 'meta' ? null : withPrice,
+    stamped: mode === 'meta' ? (newest ? 1 : 0) : (withPrice - missing),
+    missing: mode === 'meta' ? (newest ? 0 : 1) : missing,
     newestAt: newest ? new Date(newest).toISOString() : null,
     oldestAt: oldest ? new Date(oldest).toISOString() : null,
     ageDays: ageDays == null ? null : Math.round(ageDays * 10) / 10,
@@ -584,12 +588,13 @@ export function priceFreshness(boxes, refreshDays, now) {
     fresh,
     nextRunAt: newest ? new Date(newest + days * 86400000).toISOString() : null,
     reason: fresh
-      ? `Box_Id.json 里市价最近一次核对是 ${Math.floor(ageDays)} 天前，未满 ${days} 天`
+      ? `市价最近一次整轮核对是 ${Math.floor(ageDays)} 天前，未满 ${days} 天`
       : (newest
-        ? `Box_Id.json 里市价最近一次核对是 ${Math.floor(ageDays)} 天前，已过 ${days} 天周期`
-        : 'Box_Id.json 里还没有市价核对时间戳，需要采一轮'),
+        ? `市价最近一次整轮核对是 ${Math.floor(ageDays)} 天前，已过 ${days} 天周期`
+        : (mode === 'meta'
+          ? `${PRICE_META_FILE} 里还没有核对时间，需要采一轮`
+          : '还没有市价核对时间，需要采一轮')),
   };
-  return detail;
 }
 
 // 计算写回差异
@@ -627,36 +632,75 @@ export async function loadBoxes(cfg, token, source, explicitTarget, base) {
   try { boxes = JSON.parse(file.text); } catch (e) { throw new Error('Box_Id.json 解析失败'); }
   if (!Array.isArray(boxes)) throw new Error('Box_Id.json 不是数组');
   const refreshDays = ((cfg && cfg.prices && cfg.prices.crawl) || {}).refreshDays;
-  return { target, ref, file, boxes, freshness: priceFreshness(boxes, refreshDays) };
+
+  // 时间只认一条总记录：Price_Meta.json。
+  // 读不到（还没建过这个文件）就退回盒级时间戳——上一版是那么记的，历史数据照样能用。
+  let meta = null;
+  let metaFile = null;
+  try {
+    metaFile = await readFile(target, token, PRICE_META_FILE, ref);
+    if (metaFile && metaFile.text) meta = JSON.parse(metaFile.text);
+  } catch (e) { meta = null; }
+
+  const freshness = meta ? priceFreshness(meta, refreshDays) : priceFreshness(boxes, refreshDays);
+  return { target, ref, file, boxes, meta, metaFile, freshness };
 }
 
 /**
- * 写回 Box_Id.json 并开 PR。
- * 会先给「本轮核对到的盒子」打上 market_priceUpdateTime，再序列化 —— 时间戳和价格
- * 在同一个提交里，这样文件本身就是「上次什么时候核对过」的唯一真相。
- * @param {object} [opts] { stampNames?: Set<string>, at?: string, stamp?: boolean }
+ * 写回 Box_Id.json（可选）+ Price_Meta.json 并开 PR。
+ * 时间戳不再进 Box_Id.json：整轮核对只写一条总记录，跟着价格在同一个 PR 里提交。
+ * @param {object} [opts] { at?, by?, records?, characters?, metaFile?, touchMeta?: boolean }
  */
 export async function writeBoxes(cfg, token, source, explicitTarget, base, boxes, file, diffs, title, opts) {
   const target = resolveTarget(cfg, source, explicitTarget);
   const ref = base || target.branch || 'main';
   const o = opts || {};
-  let stamp = { stamped: 0, total: 0, at: null };
-  if (o.stamp !== false) {
-    stamp = stampPrices(boxes, o.at, { names: o.stampNames || null });
+  const files = [{ path: BOX_FILE, content: JSON.stringify(boxes, null, 2), sha: file.sha }];
+  let meta = null;
+  if (o.touchMeta !== false) {
+    meta = buildPriceMeta({
+      at: o.at, by: o.by, boxes: boxes.length,
+      records: o.records, characters: o.characters, note: o.note,
+    });
+    files.push({
+      path: PRICE_META_FILE,
+      content: JSON.stringify(meta, null, 2) + '\n',
+      sha: (o.metaFile && o.metaFile.sha) || undefined,   // 没有 = 新建文件
+    });
   }
   const lines = diffs.slice(0, 80).map(d => `- ${d.boxId} ${d.name} ${d.elite}: ${d.from == null ? '∅' : d.from} → ${d.to}`);
   if (diffs.length > 80) lines.push(`- ...共 ${diffs.length} 条`);
-  if (stamp.stamped) {
-    lines.push('', `已在 ${stamp.stamped} 个盒子上记录 \`${PRICE_TIME_FIELD}\` = ${stamp.at}`);
+  if (meta) {
+    lines.push('', `本轮核对时间：\`${PRICE_META_FILE}\` → ${PRICE_TIME_FIELD} = ${meta[PRICE_TIME_FIELD]}`);
   }
   const pr = await commitAndOpenPR({
     target, token, base: ref,
-    files: [{ path: BOX_FILE, content: JSON.stringify(boxes, null, 2), sha: file.sha }],
+    files,
     title: title || `chore(prices): 更新市价 (${diffs.length} 处)`,
     body: ['由市价同步自动生成。', '', ...lines].join('\n'),
     branchPrefix: 'prices',
   });
-  return Object.assign({}, pr, { stamped: stamp.stamped, stampedAt: stamp.at, stampedTotal: stamp.boxesWithPrice });
+  return Object.assign({}, pr, { meta, metaAt: meta ? meta[PRICE_TIME_FIELD] : null });
+}
+
+// 只写那条总记录（回填核对时间用），不动 Box_Id.json —— 一个 diff、一行数字。
+export async function writePriceMeta(cfg, token, source, explicitTarget, base, opts) {
+  const target = resolveTarget(cfg, source, explicitTarget);
+  const ref = base || target.branch || 'main';
+  const o = opts || {};
+  const meta = buildPriceMeta({ at: o.at, by: o.by || 'manual', boxes: o.boxes, records: o.records, note: o.note });
+  const pr = await commitAndOpenPR({
+    target, token, base: ref,
+    files: [{
+      path: PRICE_META_FILE,
+      content: JSON.stringify(meta, null, 2) + '\n',
+      sha: (o.metaFile && o.metaFile.sha) || undefined,
+    }],
+    title: o.title || `chore(prices): 记录市价核对时间 ${meta[PRICE_TIME_FIELD].slice(0, 10)}`,
+    body: ['市价整轮核对时间只保留一条总记录。', '', `- ${PRICE_TIME_FIELD}: ${meta[PRICE_TIME_FIELD]}`].join('\n'),
+    branchPrefix: 'prices-meta',
+  });
+  return Object.assign({}, pr, { meta, metaAt: meta[PRICE_TIME_FIELD] });
 }
 
 export { BOX_FILE };

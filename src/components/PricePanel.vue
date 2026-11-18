@@ -161,8 +161,14 @@
             <span class="qd-time-age">{{ freshness.ageDays == null ? '还没有记录' : freshness.ageDays + ' 天前' }}</span>
           </div>
           <div class="qd-time-sub">
-            记录字段 <code>{{ freshness.field }}</code>：
-            {{ freshness.stamped }} / {{ freshness.withPrice }} 个有市价的盒子带时间戳<template v-if="freshness.missing">，{{ freshness.missing }} 个缺</template>；
+            <template v-if="freshness.mode === 'meta'">
+              一条总记录：<code>{{ freshness.file }}</code> → <code>{{ freshness.field }}</code>
+              = {{ freshness.newestAt ? fmtDate(freshness.newestAt) : '（还没写过）' }}；
+            </template>
+            <template v-else>
+              旧格式（按盒号记）：<code>{{ freshness.field }}</code>
+              {{ freshness.stamped }} / {{ freshness.withPrice }} 个盒子有时间戳<template v-if="freshness.missing">，{{ freshness.missing }} 个缺</template>；
+            </template>
             周期 {{ freshness.refreshDays }} 天<template v-if="freshness.fresh">，下次 {{ fmtDate(freshness.nextRunAt) }}</template><template v-else-if="freshness.newestAt">，上次 {{ fmtDate(freshness.newestAt) }}</template>
           </div>
         </div>
@@ -190,8 +196,8 @@
           </button>
           <button class="btn btn-secondary" @click="crawlReset" :disabled="crawlBusy || !crawl.present">重置任务</button>
           <button class="btn btn-secondary" @click="stampPrices" :disabled="stampBusy || !isOwner"
-                  title="给现有 Box_Id.json 里所有带市价的盒子补记一次核对时间（老数据第一次接上时用）">
-            {{ stampBusy ? '补记中…' : '补记核对时间' }}
+                  title="把「这一轮是什么时候核对的」写进 Price_Meta.json（只改这一个文件、一行时间）">
+            {{ stampBusy ? '记录中…' : '补记核对时间' }}
           </button>
         </div>
         <label class="qd-check-row">
@@ -718,9 +724,9 @@ export default {
         this.crawlBusy = false
       }
     },
-    // 一次性回填：给现有 Box_Id.json 里所有带市价的盒子补记核对时间
+    // 一次性回填：只写 Price_Meta.json 这一条总记录（不动 Box_Id.json）
     async stampPrices() {
-      if (!confirm('给 Box_Id.json 里所有带市价的盒子补记一次核对时间（开一个 PR）？\n如果市价刚刚更新过，点确定后 30 天内不会再自动抓。')) return
+      if (!confirm('把「本轮市价是什么时候核对的」写成一条总记录（Price_Meta.json）？\n只改这一个文件、一行时间，会开一个 PR。\n如果市价刚刚更新过，点确定后 30 天内不会再自动抓。')) return
       this.stampBusy = true
       this.error = ''
       this.notice = ''
@@ -728,11 +734,11 @@ export default {
         const { data } = await axios.post('/api/prices?action=stamp', {})
         if (!data.success) throw new Error(data.error || '补记失败')
         if (data.changed === false) {
-          this.notice = data.message || '都已经有时间戳了'
+          this.notice = data.message || '已经有记录了'
         } else {
           this.freshness = data.after || this.freshness
           this.prUrl = data.prUrl || ''
-          this.notice = `已补记 ${data.stamped} 个盒子的核对时间，PR 已创建`
+          this.notice = `已记录 ${data.file || 'Price_Meta.json'}：${data.at}`
             + (data.after ? `；下次更新 ${this.fmtDate(data.after.nextRunAt)}` : '')
         }
       } catch (e) {
