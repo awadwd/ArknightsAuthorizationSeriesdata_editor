@@ -6,10 +6,50 @@
 // 这样客户端可以用极小代价判断差异（manifest），
 // 再只取变化的记录（records），避免每次更新都整包重下（约 158KB 且上游未压缩）。
 
+// 数据源优先级。踩过的两个坑都记在这里：
+//
+// 坑① 以前把 gitcode 排第一，结果 mirror 仓合并了市价分层改造，gitcode 还停在旧数据，
+//     客户端拿到的「参考价」其实是千岛价，代码改对了也看不到任何效果。
+// 坑② jsDelivr 的 cdn.jsdelivr.net 对 @main 有约 12 小时缓存，而且加 ?v= 也绕不过去；
+//     但同一个文件走 fastly.jsdelivr.net / gcore.jsdelivr.net 往往已经刷新了。
+//
+// 所以顺序是：Raw（实时）→ fastly CDN（多数情况比 cdn 新）→ gitcode 源仓 → cdn 兜底。
+export const UPSTREAM_MIRROR =
+  'https://raw.githubusercontent.com/awadwd/ArknightsAuthorization_Series-mirror/main/Box_Id.json';
+export const UPSTREAM_FASTLY =
+  'https://fastly.jsdelivr.net/gh/awadwd/ArknightsAuthorization_Series-mirror@main/Box_Id.json';
 export const UPSTREAM =
   'https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/raw/main/Box_Id.json';
-export const UPSTREAM_MIRROR =
+export const UPSTREAM_CDN =
   'https://cdn.jsdelivr.net/gh/awadwd/ArknightsAuthorization_Series-mirror@main/Box_Id.json';
+
+const BOX_UPSTREAMS = [UPSTREAM_MIRROR, UPSTREAM_FASTLY, UPSTREAM, UPSTREAM_CDN];
+
+// 千岛第三方市价：单独一个文件，和 Box_Id.json 的参考价并行
+export const PRICE_META_URLS = [
+  'https://raw.githubusercontent.com/awadwd/ArknightsAuthorization_Series-mirror/main/Price_Meta.json',
+  'https://fastly.jsdelivr.net/gh/awadwd/ArknightsAuthorization_Series-mirror@main/Price_Meta.json',
+  'https://raw.gitcode.com/huangjinzhou1/ArknightsAuthorization_Series/raw/main/Price_Meta.json',
+  'https://cdn.jsdelivr.net/gh/awadwd/ArknightsAuthorization_Series-mirror@main/Price_Meta.json',
+];
+
+// 上次成功的源排到最前面。国内网络对 raw.githubusercontent 经常连不上，
+// 不记住的话每次冷启动都要先失败一次（实测能多花 20 秒）。
+let _goodBoxUrl = null;
+let _goodPmUrl = null;
+
+function orderedUrls(list, good) {
+  if (!good || list.indexOf(good) <= 0) return list;
+  return [good].concat(list.filter(u => u !== good));
+}
+
+async function fetchFirstOk(list, good, validate) {
+  for (const url of orderedUrls(list, good)) {
+    const data = await fetchJson(url);
+    if (validate(data)) return { url, data };
+  }
+  return { url: null, data: null };
+}
 
 const TTL_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT = 12000;
@@ -76,10 +116,9 @@ export async function loadBoxData() {
     return _cache.data;
   }
 
-  let raw = await fetchJson(UPSTREAM);
-  if (!Array.isArray(raw)) {
-    raw = await fetchJson(UPSTREAM_MIRROR);
-  }
+  const picked = await fetchFirstOk(BOX_UPSTREAMS, _goodBoxUrl, Array.isArray);
+  let raw = picked.data;
+  if (picked.url) _goodBoxUrl = picked.url;
   if (!Array.isArray(raw)) {
     // 拉了但失败：旧缓存还可用就继续用，避免上游抖动导致接口整体不可用
     return _cache.data || null;
@@ -109,6 +148,37 @@ export async function loadBoxData() {
     }
   };
   return _cache.data;
+}
+
+// ── 千岛第三方市价（Price_Meta.json）─────────────────────────────────────────
+// 这个文件里有两样东西：market_priceUpdateTime（整轮核对时间）和 prices（按盒号分层的价）。
+// 客户端以前自己去 CDN 拉，但 jsDelivr 对 @main 有 12 小时缓存，价格改完半天看不到；
+// 走服务端就只受这里的 5 分钟缓存控制，而且顺带能算出 prices 的指纹给客户端做差异判断。
+let _pmCache = { at: 0, data: null };
+
+export async function loadPriceMeta() {
+  const now = Date.now();
+  if (_pmCache.data && now - _pmCache.at < TTL_MS) return _pmCache.data;
+
+  const picked = await fetchFirstOk(PRICE_META_URLS, _goodPmUrl,
+    (v) => !!v && typeof v === 'object' && !Array.isArray(v) && !!v.market_priceUpdateTime);
+  const raw = picked.data;
+  if (raw) {
+    if (picked.url) _goodPmUrl = picked.url;
+    const prices = raw.prices && typeof raw.prices === 'object' && !Array.isArray(raw.prices) ? raw.prices : {};
+    const at = raw.market_priceUpdateTime || raw.market_priceUpdatetime ||
+      raw.market_price_update_time || raw.marketPriceUpdateTime || null;
+    const data = {
+      at: at ? String(at) : null,
+      prices,
+      boxes: Object.keys(prices).length,
+      // 价格表指纹：客户端拿到它就知道要不要重拉整表（核对时间变了但价没变时不必重拉）
+      version: hash(JSON.stringify(prices)),
+    };
+    _pmCache = { at: now, data };
+    return data;
+  }
+  return _pmCache.data || null;
 }
 
 export function corsHeaders(methods = 'GET, OPTIONS') {

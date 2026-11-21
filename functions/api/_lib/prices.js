@@ -277,6 +277,22 @@ export function matchName(text, index) {
   return null;
 }
 
+// ── 系列名 → 盒号（串价的根治点）─────────────────────────────────────────────
+// 千岛 SPU 的商品名形如「塔露拉(精英二VER.)-通行认证56.0」，连字符后面那段是系列名。
+// 常规款的系列名固定是「通行认证NN.0」，而 Box_Id.json 里的 Box_id 正好也是「56.0」，
+// 可以直接对上——有了盒号就不用再靠干员名去猜是哪个盒子。
+//
+// 为什么必须这么做：音律联觉 / 白名单凭证 / 设定集赠品 这些特殊款里有和常规款同名的干员，
+// 只按名字匹配会把常规款的价写进特殊款（或反过来），两种系列的行情根本不是一回事。
+// 特殊款的系列名不是「通行认证NN.0」格式，所以这里返回 null，调用方直接整条丢弃。
+const SERIES_BOX_RE = /通行认证\s*(\d{1,3})\s*(?:\.0)?\s*$/;
+
+export function seriesToBoxId(series) {
+  const m = String(series || '').trim().match(SERIES_BOX_RE);
+  if (!m) return null;
+  return Number(m[1]) + '.0';
+}
+
 export function median(arr) {
   const a = arr.slice().sort((x, y) => x - y);
   const n = a.length;
@@ -428,54 +444,131 @@ export async function fetchQiandao(cfg, index, env) {
 // 把"商品标题"解析成"干员名 + 精英化"。
 // 千岛/二手市场的标题通常是「明日方舟 通行证 阿米娅 精二 出」，这里按干员名做包含匹配，
 // 精英化优先取字段，字段缺失时从标题里认 精一/精二。
+// 把报价样本落到「具体哪个盒子里的哪个干员」。
+//   - 有系列名（SPU 主路径）→ 系列名换算成盒号，盒内找干员，这是唯一能保证不串价的路径
+//   - 没系列名（帖子正文 / 手填接口）→ 只有该干员在全部数据里只出现一次才敢用，
+//     同名干员出现在多个盒子时语义不明，直接放弃
+//
+// 返回的每条样本都带 boxId；aggregate 用它分层聚合，写回时按盒号落到 Price_Meta.json。
 export function resolveSamples(samples, index) {
   const out = [];
   const unmatched = [];
-  // SPU 名已经是干净的干员名，先按精确名查一遍，命中就不用做包含匹配（避免「阿米娅」吃掉「阿米娅(近卫)」）
-  const exact = new Map();
-  for (const rec of index) if (!exact.has(rec.name)) exact.set(rec.name, rec);
+  const byBox = new Map();      // boxId -> Map(name -> rec)
+  const nameCount = new Map();  // name -> 该名字出现在几个盒子里
+  const exact = new Map();      // name -> rec（首个）
+
+  for (const rec of index) {
+    if (!byBox.has(rec.boxId)) byBox.set(rec.boxId, new Map());
+    const bm = byBox.get(rec.boxId);
+    if (!bm.has(rec.name)) bm.set(rec.name, rec);
+    nameCount.set(rec.name, (nameCount.get(rec.name) || 0) + 1);
+    if (!exact.has(rec.name)) exact.set(rec.name, rec);
+  }
+
+  const keep = (rec, s, elite, series, loose) => {
+    out.push({
+      boxId: rec.boxId, name: rec.name, price: s.price, elite,
+      series: series || '', loose: !!loose, time: s.time || null,
+    });
+  };
 
   for (const s of samples) {
     const text = s.title || s.raw || s.name || '';
-    const hit = (s.name && exact.get(s.name)) || matchName(text, index);
-    if (!hit) { unmatched.push(String(text).slice(0, 80)); continue; }
     const elite = s.elite || eliteFromTitle(text);
     if (!elite) { unmatched.push(String(text).slice(0, 80)); continue; }
-    out.push({ name: hit.name, price: s.price, elite, time: s.time || null });
+    const series = String(s.series || '').trim();
+
+    // ① 系列名能锁定盒号
+    const boxId = seriesToBoxId(series);
+    if (boxId) {
+      const bm = byBox.get(boxId);
+      if (bm) {
+        let hit = s.name ? bm.get(s.name) : null;
+        if (!hit) {
+          const key = String(s.name || '');
+          if (key) {
+            for (const [n, rec] of bm) { if (n.includes(key) || key.includes(n)) { hit = rec; break; } }
+          } else {
+            for (const [n, rec] of bm) { if (text.includes(n)) { hit = rec; break; } }
+          }
+        }
+        if (hit) { keep(hit, s, elite, series, false); continue; }
+      }
+      unmatched.push(String(text).slice(0, 80) + ' (系列 ' + series + ' 对不上盒内干员)');
+      continue;
+    }
+
+    // ② 没有系列名：只接受「全局唯一」的干员
+    const hit = (s.name && exact.get(s.name)) || matchName(text, index);
+    if (!hit) { unmatched.push(String(text).slice(0, 80)); continue; }
+    if ((nameCount.get(hit.name) || 0) !== 1) {
+      unmatched.push(String(text).slice(0, 80) + ' (同名干员在多个盒子，无法判定系列)');
+      continue;
+    }
+    keep(hit, s, elite, series, true);
   }
   return { samples: out, unmatched: unmatched.slice(0, 20), unmatchedCount: unmatched.length };
 }
 
+// 聚合键必须是「盒号 + 干员 + 精英化」。
+// 以前只有「干员 + 精英化」，同名干员在常规款和音律款里的两份完全不同的行情会被算成
+// 同一个中位数，然后写回时又按名字铺到所有盒子——这就是音律款被灌进常规款价的根因。
 export function aggregate(samples, opts) {
   const o = opts || {};
   const minSamples = Number(o.minSamples || 3);
   const madK = Number(o.outlierMad || 3);
   const ratio = Number(o.elite1Ratio || 0.72);
   const byKey = {};
+  let noBox = 0;
   for (const s of samples) {
     if (!s.elite) continue;
-    const k = s.name + '|' + s.elite;
+    if (!s.boxId) { noBox++; continue; }
+    const k = s.boxId + '|' + s.name + '|' + s.elite;
     (byKey[k] = byKey[k] || []).push(s.price);
   }
-  const prices = {};
+
+  const byBox = {};   // { 盒号: { 干员: { ELITE1, ELITE2 } } }
   const stats = [];
+  const skipped = [];
   for (const k of Object.keys(byKey)) {
-    const [name, elite] = k.split('|');
+    const i1 = k.indexOf('|');
+    const i2 = k.lastIndexOf('|');
+    const boxId = k.slice(0, i1);
+    const name = k.slice(i1 + 1, i2);
+    const elite = k.slice(i2 + 1);
     const r = robustPrice(byKey[k], madK);
     if (r.price == null) continue;
-    if (r.used < minSamples) { stats.push({ name, elite, skipped: true, used: r.used, minSamples }); continue; }
-    prices[name] = prices[name] || {};
-    prices[name][elite] = r.price;
-    stats.push({ name, elite, price: r.price, used: r.used, dropped: r.dropped });
+    if (r.used < minSamples) {
+      stats.push({ boxId, name, elite, skipped: true, used: r.used, minSamples });
+      skipped.push({ boxId, name, elite, used: r.used });
+      continue;
+    }
+    byBox[boxId] = byBox[boxId] || {};
+    byBox[boxId][name] = byBox[boxId][name] || {};
+    byBox[boxId][name][elite] = r.price;
+    stats.push({ boxId, name, elite, price: r.price, used: r.used, dropped: r.dropped });
   }
+
   // 只有精二时补精一（反之亦然）——默认关闭：用比例推算出来的价不是真实行情，
   // 想启用就在配置里打开 deriveMissing。
-  for (const name of (o.deriveMissing ? Object.keys(prices) : [])) {
-    const p = prices[name];
-    if (p.ELITE2 && !p.ELITE1) { p.ELITE1 = round2(p.ELITE2 * ratio); stats.push({ name, elite: 'ELITE1', price: p.ELITE1, derived: true }); }
-    if (p.ELITE1 && !p.ELITE2) { p.ELITE2 = round2(p.ELITE1 / ratio); stats.push({ name, elite: 'ELITE2', price: p.ELITE2, derived: true }); }
+  if (o.deriveMissing) {
+    for (const boxId of Object.keys(byBox)) {
+      for (const name of Object.keys(byBox[boxId])) {
+        const p = byBox[boxId][name];
+        if (p.ELITE2 && !p.ELITE1) { p.ELITE1 = round2(p.ELITE2 * ratio); stats.push({ boxId, name, elite: 'ELITE1', price: p.ELITE1, derived: true }); }
+        else if (p.ELITE1 && !p.ELITE2) { p.ELITE2 = round2(p.ELITE1 / ratio); stats.push({ boxId, name, elite: 'ELITE2', price: p.ELITE2, derived: true }); }
+      }
+    }
   }
-  return { prices, stats };
+
+  // 兼容旧调用：按名字展平的视图，只用来统计「匹配到多少个干员」，不参与写回
+  const prices = {};
+  for (const boxId of Object.keys(byBox)) {
+    for (const name of Object.keys(byBox[boxId])) {
+      prices[name] = Object.assign({}, byBox[boxId][name], prices[name] || {});
+    }
+  }
+  return { byBox, prices, stats, skipped, noBoxSamples: noBox };
 }
 
 // ── 市价核对时间 ─────────────────────────────────────────────────────────
@@ -517,15 +610,28 @@ export function readPriceTime(obj) {
 export function buildPriceMeta(opts) {
   const o = opts || {};
   const at = o.at ? new Date(Date.parse(o.at) || Date.now()).toISOString() : new Date().toISOString();
-  return {
-    _comment: '市价整轮核对记录。只保留这一条总记录，不要按盒号分散写进 Box_Id.json。',
+  const meta = {
+    _comment: '市价记录。market_priceUpdateTime = 整轮核对时间；prices = 千岛第三方市价，与 Box_Id.json 的参考价(market_price)并行，不要合并写回。',
     [PRICE_TIME_FIELD]: at,
     updatedBy: o.by || 'qiandao',
+    priceKind: 'third-party-reference',
     boxes: o.boxes == null ? null : Number(o.boxes),
     records: o.records == null ? null : Number(o.records),
     characters: o.characters == null ? null : Number(o.characters),
     note: o.note || null,
   };
+  if (o.prices && typeof o.prices === 'object') meta.prices = o.prices;
+  return meta;
+}
+
+// Price_Meta.json 的落盘格式：头部人可读（缩进 2），价格表压成一行。
+// 15KB 的价格表用 indent:2 排开要多出约 7KB 纯空白，而这个文件是要给客户端下载的。
+export function serializePriceMeta(meta) {
+  const head = {};
+  for (const k of Object.keys(meta || {})) if (k !== 'prices') head[k] = meta[k];
+  if (!meta || !meta.prices) return JSON.stringify(head, null, 2) + '\n';
+  const body = JSON.stringify(head, null, 2).replace(/\n\}$/, '');
+  return body + ',\n  "prices": ' + JSON.stringify(meta.prices) + '\n}\n';
 }
 
 function boxHasPrice(box) {
@@ -623,6 +729,80 @@ export function diffBoxes(boxes, prices) {
   return diffs;
 }
 
+/**
+ * 比对「这轮采到的千岛价」和 Price_Meta.json 里现有的 prices。
+ * 只动 prices，绝不碰 Box_Id.json —— 那边的 market_price 是社区参考价，两条线并行。
+ *
+ * 合并策略：本轮采到的盒子整体覆盖，没采到的盒子保留旧价。
+ * 一轮采集很难把 56 个盒子全打满（冷门盒样本少），全量替换会把上次的好数据洗掉。
+ */
+export function diffPrices(byBox, existing) {
+  const diffs = [];
+  const next = {};
+  for (const boxId of Object.keys(existing || {})) {
+    const chars = existing[boxId] || {};
+    const copy = {};
+    for (const name of Object.keys(chars)) copy[name] = Object.assign({}, chars[name]);
+    if (Object.keys(copy).length) next[boxId] = copy;
+  }
+  for (const boxId of Object.keys(byBox || {})) {
+    next[boxId] = next[boxId] || {};
+    for (const name of Object.keys(byBox[boxId])) {
+      const fresh = byBox[boxId][name] || {};
+      const cur = next[boxId][name] || {};
+      const merged = Object.assign({}, cur);
+      for (const elite of ['ELITE1', 'ELITE2']) {
+        const to = Number(fresh[elite]);
+        if (fresh[elite] == null || !isFinite(to) || to <= 0) continue;
+        if (Number(cur[elite]) !== to) {
+          diffs.push({ boxId, name, elite, from: cur[elite] == null ? null : Number(cur[elite]), to });
+        }
+        merged[elite] = to;
+      }
+      if (Object.keys(merged).length) next[boxId][name] = merged;
+    }
+    if (!Object.keys(next[boxId]).length) delete next[boxId];
+  }
+  return { diffs, next, boxes: Object.keys(byBox || {}).length };
+}
+
+/**
+ * 写回千岛市价：只写 Price_Meta.json，Box_Id.json 一个字节都不动。
+ * @param {object} opts { prices, at?, by?, records?, characters?, note?, metaFile?, diffs?, title? }
+ */
+export async function writePrices(cfg, token, source, explicitTarget, base, opts) {
+  const target = resolveTarget(cfg, source, explicitTarget);
+  const ref = base || target.branch || 'main';
+  const o = opts || {};
+  const prices = o.prices || {};
+  const meta = buildPriceMeta({
+    at: o.at, by: o.by || 'qiandao',
+    boxes: Object.keys(prices).length,
+    records: o.records, characters: o.characters, note: o.note,
+    prices,
+  });
+  const diffs = o.diffs || [];
+  const lines = diffs.slice(0, 80).map(d => `- ${d.boxId} ${d.name} ${d.elite}: ${d.from == null ? '∅' : d.from} → ${d.to}`);
+  if (diffs.length > 80) lines.push(`- ...共 ${diffs.length} 处`);
+  const pr = await commitAndOpenPR({
+    target, token, base: ref,
+    files: [{ path: PRICE_META_FILE, content: serializePriceMeta(meta), sha: o.metaFile && o.metaFile.sha }],
+    title: o.title || (diffs.length
+      ? `chore(prices): 更新千岛第三方市价 (${diffs.length} 处)`
+      : `chore(prices): 核对千岛市价（无变化，仅记录时间）`),
+    body: [
+      '由市价同步自动生成。**只写 `' + PRICE_META_FILE + '` 的 `prices`，不改 `Box_Id.json`**。',
+      '`Box_Id.json` 的 `market_price` 是社区参考价，与千岛第三方价并行，两种价不合并。',
+      '',
+      ...lines,
+      '',
+      `本轮核对时间：\`${PRICE_META_FILE}\` → ${PRICE_TIME_FIELD} = ${meta[PRICE_TIME_FIELD]}`,
+    ].join('\n'),
+    branchPrefix: 'prices',
+  });
+  return Object.assign({}, pr, { meta, metaAt: meta[PRICE_TIME_FIELD] });
+}
+
 export async function loadBoxes(cfg, token, source, explicitTarget, base) {
   const target = resolveTarget(cfg, source, explicitTarget);
   const ref = base || target.branch || 'main';
@@ -647,6 +827,10 @@ export async function loadBoxes(cfg, token, source, explicitTarget, base) {
 }
 
 /**
+ * 【已废弃】写回 Box_Id.json 的 market_price + Price_Meta.json 的核对时间。
+ * 市价分层后千岛价一律走 writePrices()，这个函数只留给历史调用兜底；
+ * 再往 Box_Id.json 写第三方价就是把参考价污染成第三方价（已经踩过一次）。
+ *
  * 写回 Box_Id.json（可选）+ Price_Meta.json 并开 PR。
  * 时间戳不再进 Box_Id.json：整轮核对只写一条总记录，跟着价格在同一个 PR 里提交。
  * @param {object} [opts] { at?, by?, records?, characters?, metaFile?, touchMeta?: boolean }
@@ -688,12 +872,14 @@ export async function writePriceMeta(cfg, token, source, explicitTarget, base, o
   const target = resolveTarget(cfg, source, explicitTarget);
   const ref = base || target.branch || 'main';
   const o = opts || {};
-  const meta = buildPriceMeta({ at: o.at, by: o.by || 'manual', boxes: o.boxes, records: o.records, note: o.note });
+  // 这个 action 只回填「核对时间」，价格表要原样带过去，否则一次 stamp 就把 prices 洗没了
+  const keepPrices = o.prices || (o.existingMeta && o.existingMeta.prices) || null;
+  const meta = buildPriceMeta({ at: o.at, by: o.by || 'manual', boxes: o.boxes, records: o.records, note: o.note, prices: keepPrices });
   const pr = await commitAndOpenPR({
     target, token, base: ref,
     files: [{
       path: PRICE_META_FILE,
-      content: JSON.stringify(meta, null, 2) + '\n',
+      content: serializePriceMeta(meta),
       sha: (o.metaFile && o.metaFile.sha) || undefined,
     }],
     title: o.title || `chore(prices): 记录市价核对时间 ${meta[PRICE_TIME_FIELD].slice(0, 10)}`,

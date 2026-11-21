@@ -1,9 +1,13 @@
 // 市价接口
 //
-// GET  /api/prices                 读当前 Box_Id.json 里的市价矩阵 + 数据源配置（脱敏）
+// 市价分两条线，永不合并：
+//   Box_Id.json      market_price  = 社区参考价（老市价），人工/上游维护，本接口不写
+//   Price_Meta.json  prices        = 千岛第三方参考价，本接口写这里
+//
+// GET  /api/prices                 读 Price_Meta.json 里的千岛价矩阵 + 数据源配置（脱敏）
 // POST /api/prices                 { action }
 //   action=preview       采集并返回涨跌预览（不写）
-//   action=apply         采集 + 写回 Box_Id.json + 开 PR
+//   action=apply         采集 + 写回 Price_Meta.json 的 prices + 开 PR
 //   action=samples       { samples:[{name,elite,price}] } 用外部数据（CSV 导入/别的脚本）
 //   action=manual        { manual:{ 干员名:{ELITE1,ELITE2} } } 保存手工价并预览
 //   action=save-config   { prices:{...} } 保存数据源配置（owner）
@@ -17,7 +21,7 @@ import { getAppConfig, saveAppConfig } from './_lib/appConfig.js';
 import { verifyRequest } from './_lib/auth.js';
 import { verifySyncRequest, syncCors } from './_lib/syncAuth.js';
 import {
-  loadBoxes, writeBoxes, writePriceMeta, fetchQiandao, aggregate, diffBoxes, buildNameIndex, normalizeSamples,
+  loadBoxes, writePrices, writePriceMeta, fetchQiandao, aggregate, diffPrices, buildNameIndex, normalizeSamples,
   resolveSamples, filterRecords, extractRecords, eliteFromTitle,
   priceFreshness, buildPriceMeta, PRICE_TIME_FIELD, PRICE_META_FILE,
 } from './_lib/prices.js';
@@ -88,18 +92,19 @@ function withFreshGate(summary, freshness) {
   return summary;
 }
 
-function matrixOf(boxes) {
-  const seen = {};
+// 面板上的价格矩阵 = Price_Meta.json 里的千岛价（按盒号分层）。
+// 不再从 Box_Id.json 读：那边的 market_price 是社区参考价，语义不同，混在一起看会误判。
+function matrixOfPrices(prices) {
   const matrix = [];
-  for (const b of boxes) {
-    for (let i = 1; i <= 10; i++) {
-      const c = b['character' + i];
-      if (!c || !c.name) continue;
-      const key = c.name;
-      if (seen[key]) continue;
-      seen[key] = true;
-      const mp = c.market_price || {};
-      matrix.push({ name: c.name, boxId: b.Box_id, ELITE1: mp.ELITE1 == null ? null : Number(mp.ELITE1), ELITE2: mp.ELITE2 == null ? null : Number(mp.ELITE2) });
+  for (const boxId of Object.keys(prices || {})) {
+    const chars = prices[boxId] || {};
+    for (const name of Object.keys(chars)) {
+      const p = chars[name] || {};
+      matrix.push({
+        name, boxId, from: 'kiandao',
+        ELITE1: p.ELITE1 == null ? null : Number(p.ELITE1),
+        ELITE2: p.ELITE2 == null ? null : Number(p.ELITE2),
+      });
     }
   }
   return matrix;
@@ -232,13 +237,19 @@ export async function onRequestGet(context) {
   const session = await getSession(context.env);
   const job = await getJob(context.env);
   try {
-    const { target, ref, boxes, freshness } = await loadBoxes(cfg, auth.token, auth.source, url.searchParams.get('target'), url.searchParams.get('base'));
+    const { target, ref, boxes, freshness, meta, metaFile } = await loadBoxes(cfg, auth.token, auth.source, url.searchParams.get('target'), url.searchParams.get('base'));
     const pcfg = cfg.prices || {};
+    const kiandaoPrices = (meta && meta.prices) || {};
     return json({
       success: true,
       target: { kind: target.kind, owner: target.owner, repo: target.repo, base: ref },
       count: boxes.length,
-      matrix: matrixOf(boxes),
+      // 千岛价（第三方参考价）矩阵；Box_Id.json 的 market_price 是另一条线，不在这里
+      matrix: matrixOfPrices(kiandaoPrices),
+      matrixSource: PRICE_META_FILE,
+      priceBoxes: Object.keys(kiandaoPrices).length,
+      priceMetaAt: meta ? meta[PRICE_TIME_FIELD] || null : null,
+      priceMetaFile: metaFile ? { exists: true, sha: metaFile.sha } : { exists: false },
       freshness,
       session: sessionStatus(session),
       crawl: withFreshGate(jobSummary(job, pcfg), freshness),
@@ -452,9 +463,14 @@ export async function onRequestPost(context) {
     }
     const at = body.at ? new Date(Date.parse(body.at) || Date.now()).toISOString() : new Date().toISOString();
     const dry = !!body.dryRun;
-    const boxes = (loaded0.boxes || []).filter(boxHasAnyPrice);
+    // 「核对过哪些盒」以 Price_Meta.json 里已有的千岛价为准；
+    // 老数据没 prices 时才退回「Box_Id.json 里有参考价的盒数」。
+    const curPrices = (loaded0.meta && loaded0.meta.prices) || {};
+    const priceBoxCount = Object.keys(curPrices).length;
+    const legacyBoxCount = (loaded0.boxes || []).filter(boxHasAnyPrice).length;
+    const boxCount = priceBoxCount || legacyBoxCount;
     const refreshDays = ((cfg.prices || {}).crawl || {}).refreshDays;
-    const previewMeta = buildPriceMeta({ at, by: 'manual', boxes: boxes.length });
+    const previewMeta = buildPriceMeta({ at, by: 'manual', boxes: boxCount, prices: curPrices });
     const before = loaded0.freshness;
     const after = priceFreshness(previewMeta, refreshDays);
     if (dry) {
@@ -464,7 +480,8 @@ export async function onRequestPost(context) {
       const pr = await writePriceMeta(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base, {
         at,
         by: 'manual',
-        boxes: boxes.length,
+        boxes: boxCount,
+        existingMeta: loaded0.meta,
         metaFile: loaded0.metaFile,
         title: body.title || `chore(prices): 记录市价核对时间 ${at.slice(0, 10)}`,
       });
@@ -548,9 +565,11 @@ export async function onRequestPost(context) {
     deriveMissing: body.deriveMissing != null ? !!body.deriveMissing : !!pcfg.deriveMissing,
   });
 
-  // 预览阶段复制一份，避免改动原始对象（apply 时才真正改）
-  const working = JSON.parse(JSON.stringify(boxes));
-  const diffs = diffBoxes(working, agg.prices);
+  // 这轮采到的千岛价 vs Price_Meta.json 里现有的，只用来生成 PR 摘要。
+  // Box_Id.json 全程不参与——它是参考价那条线，写进去就把两种价合并了（已经踩过一次）。
+  const existingPrices = (loaded.meta && loaded.meta.prices) || {};
+  const { diffs, next: nextPrices } = diffPrices(agg.byBox, existingPrices);
+  const matchedChars = Object.keys(agg.byBox).reduce((n, b) => n + Object.keys(agg.byBox[b]).length, 0);
 
   // 本轮核对时间只留一条：写进 Price_Meta.json，不往 95 个盒子上各贴一遍。
   // 预览和写回用同一个值（stampedAt），避免两次调用差几毫秒。
@@ -559,9 +578,10 @@ export async function onRequestPost(context) {
   const metaPreview = buildPriceMeta({
     at: stampedAt,
     by: got.source === 'crawl' ? 'qiandao-crawl' : 'qiandao',
-    boxes: working.filter(boxHasAnyPrice).length,
+    boxes: Object.keys(nextPrices).length,
     records: got.recordsCount || got.samples.length,
-    characters: Object.keys(agg.prices).length,
+    characters: matchedChars,
+    prices: nextPrices,
   });
 
   const summary = {
@@ -574,8 +594,16 @@ export async function onRequestPost(context) {
     recordsCount: got.recordsCount || got.samples.length,
     filteredCount: got.filteredCount || got.samples.length,
     relaxedKeyword: !!got.relaxedKeyword,
-    matchedCharacters: Object.keys(agg.prices).length,
+    matchedCharacters: matchedChars,
+    boxesMatched: Object.keys(agg.byBox).length,
+    // 有系列名、能锁定盒号的样本（可信）；loose = 只能靠「干员全局唯一」兜底的样本
+    seriesMatched: got.samples.filter(s => !s.loose).length,
+    looseSamples: got.samples.filter(s => s.loose).length,
+    noBoxSamples: agg.noBoxSamples || 0,
+    skippedByMinSamples: (agg.skipped || []).length,
     diffs: diffs.length,
+    writeTarget: PRICE_META_FILE,
+    untouched: 'Box_Id.json',
     priceTime: { file: PRICE_META_FILE, field: PRICE_TIME_FIELD, at: stampedAt },
     freshness,
     stats: agg.stats.slice(0, 200),
@@ -595,12 +623,18 @@ export async function onRequestPost(context) {
   if (action !== 'apply' && action !== 'crawl-apply') return json({ success: false, error: '未知 action: ' + action }, 400);
 
   try {
-    const pr = await writeBoxes(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base, working, file, diffs,
-      diffs.length
-        ? `chore(prices): 更新市价 (${diffs.length} 处) @ ${stampedAt}`
-        : `chore(prices): 核对市价（无变化，仅记录时间） @ ${stampedAt}`,
-      // 时间戳跟着这次 PR 一起写进 Price_Meta.json；Box_Id.json 只有价格变化
-      { at: stampedAt, by: metaPreview.updatedBy, records: metaPreview.records, characters: metaPreview.characters, metaFile: loaded.metaFile });
+    const pr = await writePrices(cfg, ownerAuth.token, ownerAuth.source, body.target, body.base, {
+      prices: nextPrices,
+      at: stampedAt,
+      by: metaPreview.updatedBy,
+      records: metaPreview.records,
+      characters: metaPreview.characters,
+      diffs,
+      metaFile: loaded.metaFile,
+      title: diffs.length
+        ? `chore(prices): 更新千岛第三方市价 (${diffs.length} 处) @ ${stampedAt}`
+        : `chore(prices): 核对千岛市价（无变化，仅记录时间） @ ${stampedAt}`,
+    });
     try {
       await saveAppConfig(env, Object.assign({}, cfg, {
         prices: Object.assign({}, cfg.prices || {}, { lastRunAt: stampedAt, lastResult: { ...summary, prUrl: pr.url, count: diffs.length } }),

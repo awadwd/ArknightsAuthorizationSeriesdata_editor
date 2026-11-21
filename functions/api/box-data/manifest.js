@@ -9,8 +9,14 @@
 //
 // 查询参数：
 //   ?light=1  只返回版本号与条数，用于「有没有更新」的极速判断
+//
+// 千岛第三方市价（Price_Meta.json）单独暴露两个字段：
+//   priceUpdatedAt  整轮核对时间
+//   pricesVersion   价格表指纹（价格没变、只是核对时间变了时，客户端不必重拉整表）
+// 客户端以前直接去 jsDelivr 拉这个文件，会被 @main 的 12 小时 CDN 缓存卡住，
+// 走这里只受 5 分钟缓存控制。
 
-import { loadBoxData, sendJson, corsHeaders } from '../_lib/boxData.js';
+import { loadBoxData, loadPriceMeta, sendJson, corsHeaders } from '../_lib/boxData.js';
 
 export async function onRequest(context) {
   const { request } = context;
@@ -31,10 +37,19 @@ export async function onRequest(context) {
     );
   }
 
+  // 千岛价元数据失败不能影响主流程：拿不到就返回 null，客户端会自己走 CDN 兜底
+  let priceMeta = null;
+  try { priceMeta = await loadPriceMeta(); } catch (e) { priceMeta = null; }
+  const priceFields = {
+    priceUpdatedAt: priceMeta ? priceMeta.at : null,
+    pricesVersion: priceMeta ? priceMeta.version : null,
+    priceBoxes: priceMeta ? priceMeta.boxes : 0
+  };
+
   const url = new URL(request.url);
   if (url.searchParams.get('light') === '1') {
     return sendJson(
-      { ok: true, version: data.version, count: data.count, generatedAt: data.generatedAt },
+      { ok: true, version: data.version, count: data.count, generatedAt: data.generatedAt, ...priceFields },
       200,
       60
     );
@@ -46,6 +61,7 @@ export async function onRequest(context) {
       version: data.version,
       count: data.count,
       generatedAt: data.generatedAt,
+      ...priceFields,
       items: data.items
     },
     200,
