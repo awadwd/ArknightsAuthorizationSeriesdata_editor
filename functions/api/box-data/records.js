@@ -5,6 +5,7 @@
 //
 // 查询参数：
 //   ids  逗号分隔的盒号列表（Box_id 字段值），单次上限 500 个
+//   all=1  不传 ids 时整包下发（客户端首次安装用）
 //
 // 返回：
 //   { ok, version, count, records: { [盒号]: 记录 }, missing: [未找到的盒号] }
@@ -36,6 +37,15 @@ export async function onRequest(context) {
     .filter(Boolean);
 
   if (!ids.length) {
+    // all=1：整包下发。客户端首次安装 / 本地缓存缺失时用，避免它去撞 gitcode
+    // 那些还没同步新数据的第三方源。
+    if (url.searchParams.get('all') === '1') {
+      return sendJson(
+        { ok: true, version: data.version, count: data.count, records: data.records },
+        200,
+        60
+      );
+    }
     return sendJson({ ok: false, error: 'missing_ids', message: '缺少 ids 参数' }, 400, 0);
   }
   if (ids.length > MAX_IDS) {
